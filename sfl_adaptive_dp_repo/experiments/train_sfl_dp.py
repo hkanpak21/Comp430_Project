@@ -8,7 +8,7 @@ from copy import deepcopy
 
 # Add project root to Python path
 import sys
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')) # Adjust based on train_sfl_dp.py location
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..')) # Go up ONE level
 sys.path.insert(0, project_root)
 
 from src.utils.config import parse_args

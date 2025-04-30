@@ -18,6 +18,7 @@ class SimpleCNN(SplitModelBase):
         # After conv1, pool1: 28 -> 14
         # After conv2, pool2: 14 -> 7
         # Flattened size: 64 * 7 * 7
+        self.flatten = nn.Flatten()
         self.fc1 = nn.Linear(64 * 7 * 7, 1024)
         self.relu3 = nn.ReLU()
         self.fc2 = nn.Linear(1024, num_classes)
@@ -26,7 +27,7 @@ class SimpleCNN(SplitModelBase):
         # This forward is mainly for defining the full model structure.
         x = self.pool1(self.relu1(self.conv1(x)))
         x = self.pool2(self.relu2(self.conv2(x)))
-        x = x.view(-1, 64 * 7 * 7) # Flatten the tensor
+        x = self.flatten(x)
         x = self.relu3(self.fc1(x))
         x = self.fc2(x)
         return F.log_softmax(x, dim=1) # Use log_softmax for NLLLoss compatibility 
