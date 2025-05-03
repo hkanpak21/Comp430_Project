@@ -230,8 +230,28 @@ def main(args):
 
         # --- End of Round --- # 
         # Calculate approximate average training loss for the round
-        num_train_samples = sum(len(clients[idx].dataloader.dataset) for idx in selected_client_indices)
-        avg_round_loss = round_loss / num_train_samples if num_train_samples > 0 else 0.0
+        total_round_samples = sum(len(clients[idx].dataloader.dataset) for idx in selected_client_indices if clients[idx].dataloader is not None)
+        avg_round_loss = round_loss / num_batches_processed_round if num_batches_processed_round > 0 else 0.0 # Or weight by samples?
+
+        # Calculate average gradient norm from feedback if available
+        avg_round_grad_norm = None
+        all_feedback_norms = []
+        if args.feedback_metric == 'grad_norm' and client_feedback_cache:
+            for client_idx in selected_client_indices:
+                if client_idx in client_feedback_cache and client_feedback_cache[client_idx]:
+                    # Average feedback over batches for the client in this round
+                    avg_client_norm = np.mean([f for f in client_feedback_cache[client_idx] if f is not None])
+                    if not np.isnan(avg_client_norm):
+                        all_feedback_norms.append(avg_client_norm)
+                client_feedback_cache[client_idx] = [] # Clear cache for next round
+
+            if all_feedback_norms:
+                avg_round_grad_norm = np.mean(all_feedback_norms)
+                logger.info(f"Average Client Gradient Norm for Round: {avg_round_grad_norm:.4f}")
+        else: # Clear cache even if not used for averaging this round
+             for client_idx in selected_client_indices:
+                 if client_idx in client_feedback_cache:
+                     client_feedback_cache[client_idx] = []
 
         # --- Adaptive Trusted Client DP Update --- #
         if args.dp_mode == 'adaptive_trusted_client':
@@ -299,7 +319,7 @@ def main(args):
                  logger.info(f"Adaptive Params History (C): {C_history}")
 
         # Log results
-        log_results(log_filepath, args, epoch + 1, avg_round_loss, accuracy, epsilon_per_round, total_epsilon, current_sigma, current_C)
+        log_results(log_filepath, args, epoch + 1, avg_round_loss, accuracy, epsilon_per_round, total_epsilon, current_sigma, current_C, avg_round_grad_norm)
 
         # Check for privacy budget exhaustion (only if using Opacus accountant)
         if args.dp_mode != 'none' and args.dp_mode != 'adaptive_trusted_client' and total_epsilon > args.target_epsilon:
