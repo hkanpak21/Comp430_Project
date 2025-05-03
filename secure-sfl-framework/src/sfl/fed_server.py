@@ -1,0 +1,97 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim # Import optim
+from collections import OrderedDict
+from typing import List, Dict
+
+from .aggregation import federated_averaging_gradients, federated_averaging
+
+class FedServer:
+    """
+    Federated Server (FedServer) in SFLV1.
+    Manages the global client-side model (WC) and aggregates client updates.
+    """
+    def __init__(self, client_model: nn.Module, config: dict, device: torch.device):
+        """
+        Args:
+            client_model: An instance of the client-side model (WC) architecture.
+            config: Configuration dictionary.
+            device: The torch device ('cpu' or 'cuda').
+        """
+        self.client_model = client_model.to(device) # Holds the global WC parameters
+        self.config = config
+        self.device = device
+        self.optimizer = self._create_optimizer() # Add optimizer for WC
+        self._client_updates = [] # Stores received client updates (gradients or models) in a round
+
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Creates the optimizer for the global client-side model (WC)."""
+        lr = self.config.get('lr', 0.01)
+        optimizer_name = self.config.get('optimizer', 'SGD').lower()
+
+        if optimizer_name == 'sgd':
+            # Consider adding momentum here if needed based on config
+            return optim.SGD(self.client_model.parameters(), lr=lr)
+        elif optimizer_name == 'adam':
+            return optim.Adam(self.client_model.parameters(), lr=lr)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+    def get_client_model_params(self) -> OrderedDict:
+        """Returns the state dictionary of the current global client model (WC)."""
+        return self.client_model.state_dict()
+
+    def receive_client_update(self, client_update: Dict[str, torch.Tensor]):
+        """
+        Receives and stores an update (typically gradients) from a client.
+
+        Args:
+            client_update: A dictionary containing the gradients or model parameters from a client.
+                           Gradients must be detached and moved to the correct device if necessary
+                           before being sent here.
+        """
+        # Ensure updates are on the correct device and detached
+        processed_update = OrderedDict()
+        for name, param in client_update.items():
+            processed_update[name] = param.detach().clone().to(self.device)
+        self._client_updates.append(processed_update)
+
+    def aggregate_updates(self):
+        """
+        Aggregates the received client updates using FedAvg and updates the global client model (WC)
+        using its optimizer.
+        Clears the stored updates after aggregation.
+        """
+        if not self._client_updates:
+            print("FedServer: No client updates received for aggregation.")
+            return
+
+        # Assume updates are gradients based on SFLV1 flow (noisy ∇WCk,t)
+        averaged_gradients = federated_averaging_gradients(self._client_updates)
+
+        # Update the global client model parameters using the averaged gradients via the optimizer
+        self.optimizer.zero_grad()
+        with torch.no_grad(): # Manually assign gradients
+            for name, param in self.client_model.named_parameters():
+                if name in averaged_gradients:
+                    if param.grad is None:
+                        param.grad = torch.zeros_like(param)
+                    param.grad.copy_(averaged_gradients[name])
+                else:
+                    # This case might indicate an issue - all client params should ideally get grads
+                    print(f"Warning: Averaged gradient for '{name}' not found during FedServer update.")
+                    if param.grad is not None:
+                        param.grad.zero_() # Zero out if it exists but wasn't in average
+
+        self.optimizer.step() # Update parameters using assigned gradients
+
+        # Clear updates for the next round
+        self._client_updates = []
+
+        # Count how many parameter groups were updated by the optimizer
+        updated_param_count = sum(1 for group in self.optimizer.param_groups for p in group['params'])
+        print(f"FedServer: Aggregated client updates and updated WC model ({updated_param_count} params) via optimizer.")
+
+    def get_client_model(self) -> nn.Module:
+        """Returns the current global client model instance."""
+        return self.client_model 
