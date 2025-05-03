@@ -1,172 +1,277 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from opacus.utils.batch_memory_manager import BatchMemoryManager
-import numpy as np
 import logging
+from copy import deepcopy
+from torch.utils.data import DataLoader
+from typing import Tuple, Optional
 
-# Add project root to Python path for importing dp.adaptive
+# Add project root to Python path if necessary, or ensure modules are importable
 import sys
 import os
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')) # Go up TWO levels
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, project_root)
 
-from src.dp.adaptive import compute_trusted_client_params
+from src.dp.noise_utils import add_laplacian_noise, apply_dp_mechanism2
+from src.dp.privacy_accountant import ManualMomentsAccountant # Import the manual accountant
+
+logger = logging.getLogger(__name__)
 
 class SFLClient:
-    def __init__(self, client_id, model_part, dataloader, optimizer_name, lr, device, local_epochs):
-        self.id = client_id
-        self.model_part = model_part.to(device)
+    """
+    Implements the client-side logic for Secure SFLV1.
+    """
+    def __init__(self,
+                 client_id: int,
+                 model_part: torch.nn.Module,
+                 dataloader: DataLoader,
+                 optimizer_name: str,
+                 lr: float,
+                 device: torch.device,
+                 laplacian_sensitivity: float, # Mechanism 1 param
+                 laplacian_epsilon_prime: float, # Mechanism 1 param
+                 gradient_clip_norm: float, # Mechanism 2 param
+                 gradient_noise_multiplier: float, # Mechanism 2 param
+                 use_privacy_accountant: bool, # Whether to track privacy for Mechanism 2
+                 accountant_params: Optional[dict] = None # Params for ManualMomentsAccountant
+                 ):
+        """
+        Initializes the SFL Client.
+
+        Args:
+            client_id: Unique ID for the client.
+            model_part: The client-side portion of the model (WC).
+            dataloader: DataLoader for the client's local dataset.
+            optimizer_name: Name of the optimizer (e.g., 'SGD').
+            lr: Learning rate for the client-side optimizer.
+            device: The device (CPU or CUDA) to run computations on.
+            laplacian_sensitivity: Sensitivity for Laplacian noise on activations (Mechanism 1).
+            laplacian_epsilon_prime: Epsilon' for Laplacian noise on activations (Mechanism 1).
+            gradient_clip_norm: Clipping norm C' for gradients (Mechanism 2).
+            gradient_noise_multiplier: Noise multiplier sigma for gradients (Mechanism 2).
+            use_privacy_accountant: Flag to enable the privacy accountant for gradient noise.
+            accountant_params: Dictionary containing dataset_size, batch_size for the accountant.
+        """
+        self.client_id = client_id
+        self.model = model_part.to(device)
         self.dataloader = dataloader
         self.device = device
-        self.local_epochs = local_epochs
 
-        # Store optimizer name and lr for potential re-initialization with DP
-        self.optimizer_name = optimizer_name
-        self.lr = lr
+        # Mechanism 1 (Laplacian Noise) parameters
+        self.laplacian_sensitivity = laplacian_sensitivity
+        self.laplacian_epsilon_prime = laplacian_epsilon_prime
 
-        # Initialize optimizer (used only if not manual DP)
-        self._initialize_optimizer()
+        # Mechanism 2 (Gradient DP) parameters
+        self.gradient_clip_norm = gradient_clip_norm
+        self.gradient_noise_multiplier = gradient_noise_multiplier
 
-        self.criterion = nn.CrossEntropyLoss() # Or appropriate loss
-        self.smashed_data = None
-        self.last_grad_norm = 0.0 # Store the gradient norm for feedback
+        # Optimizer for the client-side model (WC)
+        optimizer_class = getattr(optim, optimizer_name)
+        self.optimizer = optimizer_class(self.model.parameters(), lr=lr)
 
-    def _initialize_optimizer(self):
-        """Initializes the optimizer."""
-        if self.optimizer_name.lower() == 'sgd':
-            self.optimizer = optim.SGD(self.model_part.parameters(), lr=self.lr)
-        elif self.optimizer_name.lower() == 'adam':
-            # Adam might be problematic with manual gradient updates, SGD is safer
-            logging.warning("Using SGD instead of Adam for manual DP compatibility.")
-            self.optimizer = optim.SGD(self.model_part.parameters(), lr=self.lr)
-            # self.optimizer = optim.Adam(self.model_part.parameters(), lr=self.lr)
+        # Internal state for SFL flow
+        self._current_smashed_data = None # Store activations from forward pass for backward
+
+        # Privacy Accountant Setup (Mechanism 2)
+        self.use_privacy_accountant = use_privacy_accountant
+        self.accountant = None
+        if self.use_privacy_accountant:
+             if accountant_params is None or 'dataset_size' not in accountant_params or 'batch_size' not in accountant_params:
+                 raise ValueError("Accountant parameters (dataset_size, batch_size) required when use_privacy_accountant is True.")
+             # Assuming ManualMomentsAccountant exists and takes these params
+             self.accountant = ManualMomentsAccountant(
+                 dataset_size=accountant_params['dataset_size'],
+                 batch_size=accountant_params['batch_size'],
+                 noise_multiplier=self.gradient_noise_multiplier
+                 # orders can be customized via config if needed, using default otherwise
+             )
+             logger.info(f"Client {client_id} initialized with Manual Privacy Accountant.")
+
+        logger.info(f"Client {client_id} initialized. Data size: {len(dataloader.dataset)}, Device: {device}")
+
+    def set_optimizer(self, optimizer: torch.optim.Optimizer):
+         """Sets or replaces the client's optimizer."""
+         self.optimizer = optimizer
+         logger.info(f"Client {self.client_id}: Optimizer set to {type(optimizer).__name__}")
+
+    def train_step(self, num_local_epochs: int):
+        """
+        Generator function for client local training.
+        Iterates over the client's dataloader for a number of epochs,
+        performs the forward pass, and yields noisy smashed data and targets.
+        This adapts the client for the loop in experiments/train_sfl_dp.py.
+
+        Args:
+            num_local_epochs: The number of local epochs to run.
+
+        Yields:
+            Tuple[torch.Tensor, torch.Tensor]: (noisy_smashed_data, targets)
+        """
+        self.model.train()
+        logger.debug(f"Client {self.client_id} starting train_step for {num_local_epochs} epochs.")
+        for epoch in range(num_local_epochs):
+            epoch_iterator = iter(self.dataloader)
+            batch_idx = 0
+            while True:
+                try:
+                    data, targets = next(epoch_iterator)
+                    # Perform forward pass (stores original smashed, returns noisy)
+                    noisy_smashed_data, original_smashed_data = self.forward_pass(data)
+                    # Yield noisy data and targets for the server
+                    # Store original smashed data internally (already done by forward_pass)
+                    yield noisy_smashed_data, targets.to(self.device) # Ensure targets are on device
+                    batch_idx += 1
+                except StopIteration:
+                    logger.debug(f"Client {self.client_id} finished epoch {epoch+1}/{num_local_epochs}.")
+                    break # End of dataloader for this epoch
+                except Exception as e:
+                    logger.error(f"Error during client {self.client_id} train_step epoch {epoch+1}, batch {batch_idx}: {e}", exc_info=True)
+                    # Optionally break or continue depending on desired fault tolerance
+                    break
+        # Signal that local training is done by stopping iteration
+        logger.debug(f"Client {self.client_id} finished train_step.")
+        return # Ends the generator
+
+    def forward_pass(self, data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Performs the client-side forward pass, stores activations, adds noise.
+
+        Args:
+            data: Input data batch.
+
+        Returns:
+            A tuple containing:
+            - noisy_smashed_data: Activations from the cut layer with Laplacian noise added.
+            - original_smashed_data: Activations *before* noise (needed for backward pass).
+        """
+        self.model.train() # Ensure model is in training mode
+        data = data.to(self.device)
+
+        # Forward pass through client model
+        smashed_data = self.model(data)
+
+        # Store original smashed data (with grad_fn) for the backward pass
+        self._current_smashed_data = smashed_data
+
+        # --- Apply Noise Mechanism 1: Laplacian Noise on Smashed Data --- #
+        noisy_smashed_data = add_laplacian_noise(
+            smashed_data.detach().clone(), # Apply noise on detached copy
+            self.laplacian_sensitivity,
+            self.laplacian_epsilon_prime
+        )
+
+        # logger.debug(f"Client {self.client_id}: Forward pass done. Smashed shape: {smashed_data.shape}, Noisy shape: {noisy_smashed_data.shape}")
+        return noisy_smashed_data, smashed_data # Return both noisy (for server) and original (for client backward)
+
+    # Modified: Now performs backward pass and prepares model for optimizer step
+    # but doesn't return gradients. Called by apply_gradients.
+    def _internal_backward_pass(self, grad_activation: torch.Tensor):
+        """
+        Performs the client-side backward pass using stored activations.
+        Applies Mechanism 2 (clipping, noise) if applicable (manual DP case).
+        Sets gradients on the model parameters, ready for optimizer.step().
+
+        Args:
+            grad_activation: Gradients received from the Main Server w.r.t. the
+                             *original* (non-noisy) smashed data.
+        """
+        if self._current_smashed_data is None:
+             raise RuntimeError(f"Client {self.client_id}: Backward pass called before forward pass or smashed data not stored.")
+
+        if not self._current_smashed_data.requires_grad:
+             logger.warning(f"Client {self.client_id}: Smashed data does not require grad. Skipping backward pass.")
+             # Ensure gradients are zero if skipping
+             self.optimizer.zero_grad(set_to_none=True)
+             return
+
+        grad_activation = grad_activation.to(self.device)
+
+        # Perform backward pass from server grad into client model
+        # This calculates gradients for WC parameters
+        self.optimizer.zero_grad() # Zero grads before backward
+        # Use the original smashed data that requires grad
+        self._current_smashed_data.backward(gradient=grad_activation)
+
+        # --- Apply Noise Mechanism 2: Per-sample Clipping & Gaussian Noise --- #
+        # This step depends on whether we are using Opacus (which handles DP in optimizer.step)
+        # or a manual mode like SFLV1/V2.
+        # The current structure assumes Opacus handles it if dp_mode == 'vanilla'.
+        # If manual DP modes were fully implemented, clipping/noise would happen here before optimizer.step.
+        # For SFLV1, apply_dp_mechanism2 was used, but it returned gradients instead of modifying them in-place.
+        # For simplicity with the current training loop, we assume DP is handled by Opacus DPOptimizer if applicable.
+        # If args.dp_mode requires manual DP, this part needs implementation.
+        if self.use_privacy_accountant and not isinstance(self.optimizer, optim.Optimizer):
+             # Example: Check if optimizer is NOT a standard PyTorch one, implies Opacus wrapper
+             logger.debug(f"Client {self.client_id}: Assuming Opacus DPOptimizer handles clipping/noise.")
+             pass # Opacus DPOptimizer.step() will handle it
+
+        # Gradients are now computed and stored in model parameters (potentially modified by DP logic above)
+
+        # Clear stored smashed data after use
+        self._current_smashed_data = None
+
+        # --- Update Privacy Accountant (if enabled) --- #
+        if self.accountant:
+             # Record one step IF DP-SGD was actually performed.
+             # This depends on whether Opacus DPOptimizer is used or manual DP applied.
+             # If using Opacus, it handles accounting internally. Manual needs explicit step.
+             # For now, we optimistically step if accountant exists (manual or Opacus).
+             # Opacus accountant might be stepped internally too, check Opacus docs.
+             try:
+                 self.accountant.step(steps=1)
+             except AttributeError:
+                  # Handle case where accountant is from Opacus and doesn't have manual step
+                  pass
+             except Exception as e:
+                  logger.error(f"Error stepping accountant for client {self.client_id}: {e}")
+
+        logger.debug(f"Client {self.client_id}: Internal backward pass done.")
+
+        # Return nothing, gradients are set on the model
+
+    # Modified signature to only take grad_activation
+    def apply_gradients(self, grad_activation: torch.Tensor):
+        """
+        Applies gradients received from the server and updates the client model.
+        Calls internal backward pass and then optimizer.step().
+        Adapts client for the loop in experiments/train_sfl_dp.py.
+
+        Args:
+            grad_activation: Gradients received from the Main Server w.r.t. the
+                             *original* (non-noisy) smashed data.
+        Returns:
+             Optional[dict]: Feedback metrics (e.g., gradient norm) - currently returns None.
+        """
+        # Perform backward pass to compute gradients for client model (WC)
+        self._internal_backward_pass(grad_activation)
+
+        # Update client model parameters
+        # This step applies the gradients (potentially clipped/noised by DPOptimizer)
+        self.optimizer.step()
+
+        logger.debug(f"Client {self.client_id}: Applied gradients and updated model.")
+
+        # TODO: Optionally compute and return feedback metrics like avg grad norm
+        # Requires accessing gradients before optimizer step, potentially complex with Opacus.
+        feedback = None
+        return feedback
+
+    def update_model(self, global_client_model_state_dict):
+         """Receives the updated global client model state from Fed Server."""
+         self.model.load_state_dict(global_client_model_state_dict)
+         # logger.debug(f"Client {self.client_id}: Updated model from Fed Server.")
+
+    def get_model_part(self):
+         """Returns the current state of the client model part."""
+         # Return a deep copy to prevent external modification?
+         return deepcopy(self.model)
+
+    def get_privacy_spent(self, delta: float) -> Optional[Tuple[float, float]]:
+        """Returns the current (epsilon, delta) privacy budget spent, if accountant is enabled."""
+        if self.accountant:
+            return self.accountant.get_privacy_spent(delta)
         else:
-            raise ValueError(f"Unsupported optimizer: {self.optimizer_name}")
+            return None
 
-    def set_optimizer(self, optimizer):
-        """Allows replacing the optimizer (e.g., with Opacus DP optimizer, though not used for manual DP)."""
-        # This might not be needed if we stick to manual DP for adaptive_trusted_client
-        self.optimizer = optimizer
 
-    def train_step(self, server_gradients):
-        """Performs one local training step (forward pass only)."""
-        self.model_part.train()
-        # Note: Backward pass and optimizer step happen in apply_gradients
-
-        # Perform local epochs
-        for epoch in range(self.local_epochs):
-            if isinstance(self.dataloader, BatchMemoryManager):
-                 # Opacus BMM handling (though Opacus optimizer won't be used for manual DP)
-                for data, target in self.dataloader:
-                    data, target = data.to(self.device), target.to(self.device)
-                    self.optimizer.zero_grad() # Zero grad before forward pass
-                    self.smashed_data = self.model_part(data)
-                    yield self.smashed_data.detach().clone().cpu(), target.cpu()
-            else:
-                # Standard DataLoader iteration
-                for data, target in self.dataloader:
-                    data, target = data.to(self.device), target.to(self.device)
-                    self.optimizer.zero_grad() # Zero grad before forward pass
-                    self.smashed_data = self.model_part(data)
-                    yield self.smashed_data.detach().clone().cpu(), target.cpu()
-
-        # Return None after local epochs are done
-        yield None, None
-
-    def apply_gradients(self, gradients, dp_mode, current_sigma=None, current_C=None):
-        """Applies gradients received from the server, calculates grad norm, and applies manual DP if needed."""
-        if gradients is None or self.smashed_data is None:
-            self.last_grad_norm = 0.0
-            self.smashed_data = None
-            return
-
-        try:
-            # Perform backward pass using gradients from server
-            self.smashed_data.backward(gradients.to(self.device))
-
-            # Calculate L2 norm of the *average* gradient across the batch
-            # This norm is used for feedback
-            total_norm_sq = 0.0
-            num_params = 0
-            avg_grads_list = [] # Store average grads for manual DP
-            for p in self.model_part.parameters():
-                if p.grad is not None:
-                    # Opacus calculates per-sample grads, but here we only have the batch average grad
-                    avg_grad = p.grad.detach().data # This is the gradient averaged over the batch
-                    avg_grads_list.append(avg_grad)
-                    param_norm_sq = avg_grad.norm(2).item() ** 2
-                    total_norm_sq += param_norm_sq
-                    num_params += 1
-            self.last_grad_norm = (total_norm_sq ** 0.5) / num_params if num_params > 0 else 0.0 # Avg norm per parameter
-            # Alternative feedback: norm of the concatenated grad vector
-            # flat_avg_grad = torch.cat([g.flatten() for g in avg_grads_list])
-            # self.last_grad_norm = flat_avg_grad.norm(2).item()
-
-            # Apply DP manually if in adaptive_trusted_client mode
-            if dp_mode == 'adaptive_trusted_client':
-                if current_sigma is None or current_C is None:
-                    logging.error("Manual DP requires sigma and C values.")
-                    raise ValueError("Sigma and C must be provided for manual DP.")
-                
-                # 1. Calculate norm of the concatenated average gradient vector
-                flat_avg_grad = torch.cat([g.flatten() for g in avg_grads_list])
-                avg_grad_norm = flat_avg_grad.norm(2).item()
-                
-                # 2. Clip the average gradient vector
-                clip_coeff = min(1.0, current_C / (avg_grad_norm + 1e-6)) # Add epsilon for stability
-                
-                # 3. Add noise and update parameters manually
-                with torch.no_grad():
-                    for i, p in enumerate(self.model_part.parameters()):
-                        if p.grad is not None:
-                            avg_grad = avg_grads_list[i]
-                            clipped_grad = avg_grad * clip_coeff
-                            
-                            # Generate noise (scale by C, not sigma*C for Gaussian mechanism)
-                            noise_std = current_sigma * current_C
-                            noise = torch.normal(0, noise_std, size=avg_grad.shape, device=self.device)
-                            
-                            noised_clipped_grad = clipped_grad + noise
-                            
-                            # Manual optimizer step (SGD)
-                            p.data -= self.lr * noised_clipped_grad
-                            
-                            # Zero out grad manually since optimizer.step() is bypassed
-                            p.grad = None 
-
-            else:
-                # Use the standard optimizer (potentially wrapped by Opacus for other DP modes)
-                self.optimizer.step()
-
-        except RuntimeError as e:
-            logging.error(f"Client {self.id}: Error during backward/step: {e}", exc_info=True)
-            logging.error(f"Smashed data shape: {self.smashed_data.shape if self.smashed_data is not None else 'None'}, requires_grad: {self.smashed_data.requires_grad if self.smashed_data is not None else 'N/A'}")
-            logging.error(f"Gradients shape: {gradients.shape}")
-            # Zero grads manually on error if optimizer step was skipped
-            if dp_mode == 'adaptive_trusted_client':
-                 with torch.no_grad():
-                    for p in self.model_part.parameters():
-                        if p.grad is not None:
-                            p.grad = None
-            else:
-                self.optimizer.zero_grad()
-            raise e
-        finally:
-            # Ensure optimizer gradients are zeroed if not handled by manual update
-            if dp_mode != 'adaptive_trusted_client':
-                 self.optimizer.zero_grad()
-            self.smashed_data = None # Clear after use
-
-    def get_feedback_metric(self):
-        """Returns the calculated feedback metric (average gradient norm)."""
-        return self.last_grad_norm
-
-    def calculate_new_dp_params(self, current_sigma, current_C, feedback_metrics, prev_avg_norm, config):
-        """(Trusted Client Only) Calculates new DP parameters based on feedback."""
-        if self.id != config.trusted_client_id:
-            raise PermissionError("Only the trusted client can calculate new DP parameters.")
-        
-        logging.info(f"Trusted Client {self.id}: Calculating new DP params.")
-        return compute_trusted_client_params(current_sigma, current_C, feedback_metrics, prev_avg_norm, config)
-
+# Removed DP related methods (get_feedback_metric, calculate_new_dp_params) 

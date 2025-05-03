@@ -1,0 +1,28 @@
+# Experiment Configuration (No DP Noise)
+seed: 42
+dataset: "MNIST"
+model: "SimpleCNN"
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 10
+batch_size: 64
+num_rounds: 10 # More rounds
+
+# Model & Training
+lr: 0.01 # Back to 0.01
+optimizer: "SGD" # Use Adam
+cut_layer: 4
+
+# Differential Privacy Noise Parameters (Laplacian Disabled)
+dp_noise:
+  laplacian_sensitivity: 0.0 # Keep Laplacian disabled
+  epsilon_prime: 1.0
+
+  # Parameters for Gaussian noise on gradients (Mechanism 2) - Keep enabled
+  clip_norm: 1.0
+  noise_multiplier: 1.1
+  delta: 1e-5
+
+# Logging
+log_interval: 1 # Log training loss every N rounds 
