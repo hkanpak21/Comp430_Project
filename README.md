@@ -103,7 +103,7 @@ To run the main training script:
 python experiments/train_secure_sfl.py --config configs/default.yaml
 
 # Option 2: Run as a module (might still be needed depending on environment)
-# python -m experiments.train_secure_sfl --config configs/default.yaml 
+# python -m experiments.train_secure_sfl --config configs/default.yaml
 ```
 
 You can specify a different configuration file using the `--config` argument.

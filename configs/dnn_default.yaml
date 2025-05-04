@@ -7,20 +7,20 @@ data_dir: "./data"
 # SFL Setup
 num_clients: 10
 batch_size: 64
-num_rounds: 20
+num_rounds: 50 # Use 50 rounds for potentially better accuracy
 
 # Model & Training
-lr: 0.01
-optimizer: "SGD"
-cut_layer: 2 # Split after fc2 + relu2 (indices: 0=Flatten, 1=fc1, 2=relu1, 3=fc2, 4=relu2)
+lr: 0.01 # Use 0.01
+optimizer: "Adam" # Use Adam
+cut_layer: 4 # Split after fc2 + relu2 (indices: 0=Flatten, 1=fc1, 2=relu1, 3=fc2, 4=relu2)
 
 # Differential Privacy Noise Parameters (Example: No noise)
 dp_noise:
   laplacian_sensitivity: 0.0
   epsilon_prime: 1.0
-  clip_norm: 10000.0
+  clip_norm: 1.0
   noise_multiplier: 0.0
   delta: 1e-5
 
 # Logging
-log_interval: 100 
+log_interval: 10 
