@@ -6,6 +6,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 # print(f"DEBUG: Inserted into sys.path: {project_root}") # Debug print - Can be removed later
 # print(f"DEBUG: Current sys.path[0]: {sys.path[0]}") # Debug print - Can be removed later
+print("DEBUG: sys.path BEFORE import:", sys.path) # Print full sys.path
 
 import torch
 import torch.nn as nn
