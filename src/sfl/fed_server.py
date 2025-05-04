@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim # Import optim
 from collections import OrderedDict
 from typing import List, Dict
+import numpy as np
 
 from .aggregation import federated_averaging_gradients, federated_averaging
 
@@ -23,6 +24,13 @@ class FedServer:
         self.device = device
         self.optimizer = self._create_optimizer() # Add optimizer for WC
         self._client_updates = [] # Stores received client updates (gradients or models) in a round
+
+        # Adaptive DP: Track validation loss and noise scale
+        self._current_sigma = config['dp_noise']['initial_sigma']
+        self._validation_losses = []  # Store recent validation losses
+        self._noise_decay_patience = config['dp_noise']['noise_decay_patience']
+        self._adaptive_noise_decay_factor = config['dp_noise']['adaptive_noise_decay_factor']
+        self._criterion = nn.CrossEntropyLoss()
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Creates the optimizer for the global client-side model (WC)."""
@@ -56,7 +64,46 @@ class FedServer:
             processed_update[name] = param.detach().clone().to(self.device)
         self._client_updates.append(processed_update)
 
-    def aggregate_updates(self):
+    def evaluate_validation_loss(self, validation_loader) -> float:
+        """
+        Evaluates the current model on the validation set.
+        """
+        self.client_model.eval()
+        total_loss = 0.0
+        with torch.no_grad():
+            for data, labels in validation_loader:
+                data, labels = data.to(self.device), labels.to(self.device)
+                outputs = self.client_model(data)
+                loss = self._criterion(outputs, labels)
+                total_loss += loss.item()
+        return total_loss / len(validation_loader)
+
+    def _update_noise_scale(self, validation_loss: float):
+        """
+        Updates the noise scale based on validation loss trend.
+        """
+        self._validation_losses.append(validation_loss)
+        
+        # Check if we have enough history to make a decision
+        if len(self._validation_losses) < self._noise_decay_patience + 1:
+            return
+        
+        # Check if loss has been decreasing for the required number of rounds
+        recent_losses = self._validation_losses[-self._noise_decay_patience:]
+        is_decreasing = all(recent_losses[i] > recent_losses[i+1] 
+                          for i in range(len(recent_losses)-1))
+        
+        if is_decreasing:
+            # Decrease noise scale
+            self._current_sigma *= self._adaptive_noise_decay_factor
+            print(f"FedServer: Loss decreasing for {self._noise_decay_patience} rounds. "
+                  f"Updated noise scale to {self._current_sigma:.4f}")
+
+    def get_current_sigma(self) -> float:
+        """Returns the current noise scale sigma_t."""
+        return self._current_sigma
+
+    def aggregate_updates(self, validation_loader=None):
         """
         Aggregates the received client updates using FedAvg and updates the global client model (WC)
         using its optimizer.
@@ -84,6 +131,11 @@ class FedServer:
                         param.grad.zero_() # Zero out if it exists but wasn't in average
 
         self.optimizer.step() # Update parameters using assigned gradients
+
+        # Update noise scale if validation loader is provided
+        if validation_loader is not None:
+            validation_loss = self.evaluate_validation_loss(validation_loader)
+            self._update_noise_scale(validation_loss)
 
         # Clear updates for the next round
         self._client_updates = []

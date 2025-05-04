@@ -57,10 +57,27 @@ def main():
     print(f"Using device: {device}")
     set_seed(config['seed'])
 
-    _, test_loader, train_dataset, _ = get_mnist_dataloaders(config)
+    # Get train, validation, and test loaders
+    train_loader, test_loader, train_dataset, _ = get_mnist_dataloaders(config)
+    
+    # Split training data into client data and validation set
+    validation_ratio = config['dp_noise']['validation_set_ratio']
+    validation_size = int(len(train_dataset) * validation_ratio)
+    train_size = len(train_dataset) - validation_size
+    
+    train_dataset, validation_dataset = torch.utils.data.random_split(
+        train_dataset, [train_size, validation_size]
+    )
+    validation_loader = torch.utils.data.DataLoader(
+        validation_dataset,
+        batch_size=config['batch_size'],
+        shuffle=False
+    )
+    
     client_loaders = get_client_data_loaders(config, train_dataset)
     num_clients = config['num_clients']
     print(f"Loaded {config['dataset']} dataset and created {num_clients} client data loaders.")
+    print(f"Created validation set with {len(validation_dataset)} samples.")
 
     full_model = get_model(config['model']).to(device) # Use the get_model function
     client_model_template, server_model_template = split_model(full_model, config['cut_layer'])
@@ -82,10 +99,8 @@ def main():
     dataset_size = len(train_dataset)
     batch_size = config['batch_size']
     sampling_rate = batch_size / dataset_size
-    noise_multiplier = config['dp_noise']['noise_multiplier']
-    clip_norm = config['dp_noise']['clip_norm']
     target_delta = float(config['dp_noise']['delta'])
-    print(f"Initialized Manual Privacy Accountant. Sampling rate (q): {sampling_rate:.4f}, Noise Multiplier (z): {noise_multiplier}, Clip Norm (C): {clip_norm}, Target Delta: {target_delta}")
+    print(f"Initialized Manual Privacy Accountant. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
 
     start_time = time.time()
     num_rounds = config['num_rounds']
@@ -94,6 +109,12 @@ def main():
     for round_num in range(num_rounds):
         round_start_time = time.time()
         print(f"\n--- Round {round_num + 1}/{num_rounds} ---")
+        
+        # Broadcast current noise scale to clients
+        current_sigma = fed_server.get_current_sigma()
+        for client in clients:
+            client.update_noise_scale(current_sigma)
+        
         global_client_params = fed_server.get_client_model_params()
         for client in clients:
             client.set_model_params(global_client_params)
@@ -121,24 +142,29 @@ def main():
                 activation_grad = client_activation_grads[client.client_id]
                 noisy_wc_grad = client.local_backward_pass(activation_grad)
                 client_noisy_wc_grads.append(noisy_wc_grad)
-                if noise_multiplier > 0:
-                    privacy_accountant.step(noise_multiplier=noise_multiplier,
-                                            sampling_rate=sampling_rate,
-                                            num_steps=1)
+                if current_sigma > 0:
+                    privacy_accountant.step(
+                        noise_multiplier=current_sigma,
+                        sampling_rate=sampling_rate,
+                        num_steps=1
+                    )
             else:
                 print(f"Warning: No activation gradient received for Client {client.client_id}")
 
         for noisy_grad in client_noisy_wc_grads:
             fed_server.receive_client_update(noisy_grad)
 
-        fed_server.aggregate_updates()
+        # Aggregate updates and update noise scale based on validation loss
+        fed_server.aggregate_updates(validation_loader)
+        
         round_end_time = time.time()
         print(f"--- Round {round_num + 1} finished in {round_end_time - round_start_time:.2f} seconds ---")
 
         if (round_num + 1) % config.get('log_interval', 10) == 0:
-            if noise_multiplier > 0:
+            if current_sigma > 0:
                 epsilon, _ = privacy_accountant.get_privacy_spent(delta=target_delta)
                 print(f"Round {round_num + 1}: Current Privacy Budget (ε, δ={target_delta}): ({epsilon:.4f}, {target_delta})")
+                print(f"Round {round_num + 1}: Current Noise Scale (σ): {current_sigma:.4f}")
             else:
                 print(f"Round {round_num + 1}: Noise disabled, privacy budget not tracked.")
 
@@ -165,9 +191,10 @@ def main():
     else:
         test_accuracy = None
 
-    if noise_multiplier > 0:
+    if current_sigma > 0:
         final_epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
         print(f"Final Privacy Budget (ε, δ) for Mechanism 2 (Gaussian): ({final_epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
+        print(f"Final Noise Scale (σ): {current_sigma:.4f}")
     else:
         print("Final Privacy Budget: Noise disabled for Mechanism 2.")
 
