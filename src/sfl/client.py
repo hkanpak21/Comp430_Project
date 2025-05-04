@@ -1,277 +1,183 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import logging
-from copy import deepcopy
 from torch.utils.data import DataLoader
-from typing import Tuple, Optional
+from collections import OrderedDict
+from typing import Tuple, Dict
 
-# Add project root to Python path if necessary, or ensure modules are importable
-import sys
-import os
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-sys.path.insert(0, project_root)
-
-from src.dp.noise_utils import add_laplacian_noise, apply_dp_mechanism2
-from src.dp.privacy_accountant import ManualMomentsAccountant # Import the manual accountant
-
-logger = logging.getLogger(__name__)
+# Assuming noise_utils.py is in src/dp/
+from ..dp import noise_utils
 
 class SFLClient:
     """
-    Implements the client-side logic for Secure SFLV1.
+    Client in SFLV1.
+    Manages local data, client-side model (WC), performs local computations,
+    applies noise, and communicates intermediate results.
     """
-    def __init__(self,
-                 client_id: int,
-                 model_part: torch.nn.Module,
-                 dataloader: DataLoader,
-                 optimizer_name: str,
-                 lr: float,
-                 device: torch.device,
-                 laplacian_sensitivity: float, # Mechanism 1 param
-                 laplacian_epsilon_prime: float, # Mechanism 1 param
-                 gradient_clip_norm: float, # Mechanism 2 param
-                 gradient_noise_multiplier: float, # Mechanism 2 param
-                 use_privacy_accountant: bool, # Whether to track privacy for Mechanism 2
-                 accountant_params: Optional[dict] = None # Params for ManualMomentsAccountant
-                 ):
+    def __init__(self, client_id: int, client_model: nn.Module, dataloader: DataLoader, config: dict, device: torch.device):
         """
-        Initializes the SFL Client.
-
         Args:
-            client_id: Unique ID for the client.
-            model_part: The client-side portion of the model (WC).
-            dataloader: DataLoader for the client's local dataset.
-            optimizer_name: Name of the optimizer (e.g., 'SGD').
-            lr: Learning rate for the client-side optimizer.
-            device: The device (CPU or CUDA) to run computations on.
-            laplacian_sensitivity: Sensitivity for Laplacian noise on activations (Mechanism 1).
-            laplacian_epsilon_prime: Epsilon' for Laplacian noise on activations (Mechanism 1).
-            gradient_clip_norm: Clipping norm C' for gradients (Mechanism 2).
-            gradient_noise_multiplier: Noise multiplier sigma for gradients (Mechanism 2).
-            use_privacy_accountant: Flag to enable the privacy accountant for gradient noise.
-            accountant_params: Dictionary containing dataset_size, batch_size for the accountant.
+            client_id: Unique identifier for the client.
+            client_model: A *copy* of the initial client-side model (WC) architecture.
+            dataloader: DataLoader for the client's local dataset partition.
+            config: Configuration dictionary.
+            device: The torch device ('cpu' or 'cuda').
         """
         self.client_id = client_id
-        self.model = model_part.to(device)
+        self.client_model = client_model.to(device)
         self.dataloader = dataloader
+        self.config = config
         self.device = device
+        self.optimizer = self._create_optimizer() # Optimizer for WC
 
-        # Mechanism 1 (Laplacian Noise) parameters
-        self.laplacian_sensitivity = laplacian_sensitivity
-        self.laplacian_epsilon_prime = laplacian_epsilon_prime
+        # Store intermediate activation for backward pass
+        self._activations = None
+        self._data_batch = None # Store data batch to access individual samples for clipping
+        self._labels_batch = None # Store labels corresponding to the data batch
 
-        # Mechanism 2 (Gradient DP) parameters
-        self.gradient_clip_norm = gradient_clip_norm
-        self.gradient_noise_multiplier = gradient_noise_multiplier
+        # Adaptive DP: Store previous round's gradient norms and current noise scale
+        self._prev_round_grad_norms = None
+        self._current_clip_threshold = config['dp_noise']['clip_norm'] # Initial threshold
+        self._current_sigma = config['dp_noise']['initial_sigma'] # Initial noise scale
 
-        # Optimizer for the client-side model (WC)
-        optimizer_class = getattr(optim, optimizer_name)
-        self.optimizer = optimizer_class(self.model.parameters(), lr=lr)
-
-        # Internal state for SFL flow
-        self._current_smashed_data = None # Store activations from forward pass for backward
-
-        # Privacy Accountant Setup (Mechanism 2)
-        self.use_privacy_accountant = use_privacy_accountant
-        self.accountant = None
-        if self.use_privacy_accountant:
-             if accountant_params is None or 'dataset_size' not in accountant_params or 'batch_size' not in accountant_params:
-                 raise ValueError("Accountant parameters (dataset_size, batch_size) required when use_privacy_accountant is True.")
-             # Assuming ManualMomentsAccountant exists and takes these params
-             self.accountant = ManualMomentsAccountant(
-                 dataset_size=accountant_params['dataset_size'],
-                 batch_size=accountant_params['batch_size'],
-                 noise_multiplier=self.gradient_noise_multiplier
-                 # orders can be customized via config if needed, using default otherwise
-             )
-             logger.info(f"Client {client_id} initialized with Manual Privacy Accountant.")
-
-        logger.info(f"Client {client_id} initialized. Data size: {len(dataloader.dataset)}, Device: {device}")
-
-    def set_optimizer(self, optimizer: torch.optim.Optimizer):
-         """Sets or replaces the client's optimizer."""
-         self.optimizer = optimizer
-         logger.info(f"Client {self.client_id}: Optimizer set to {type(optimizer).__name__}")
-
-    def train_step(self, num_local_epochs: int):
-        """
-        Generator function for client local training.
-        Iterates over the client's dataloader for a number of epochs,
-        performs the forward pass, and yields noisy smashed data and targets.
-        This adapts the client for the loop in experiments/train_sfl_dp.py.
-
-        Args:
-            num_local_epochs: The number of local epochs to run.
-
-        Yields:
-            Tuple[torch.Tensor, torch.Tensor]: (noisy_smashed_data, targets)
-        """
-        self.model.train()
-        logger.debug(f"Client {self.client_id} starting train_step for {num_local_epochs} epochs.")
-        for epoch in range(num_local_epochs):
-            epoch_iterator = iter(self.dataloader)
-            batch_idx = 0
-            while True:
-                try:
-                    data, targets = next(epoch_iterator)
-                    # Perform forward pass (stores original smashed, returns noisy)
-                    noisy_smashed_data, original_smashed_data = self.forward_pass(data)
-                    # Yield noisy data and targets for the server
-                    # Store original smashed data internally (already done by forward_pass)
-                    yield noisy_smashed_data, targets.to(self.device) # Ensure targets are on device
-                    batch_idx += 1
-                except StopIteration:
-                    logger.debug(f"Client {self.client_id} finished epoch {epoch+1}/{num_local_epochs}.")
-                    break # End of dataloader for this epoch
-                except Exception as e:
-                    logger.error(f"Error during client {self.client_id} train_step epoch {epoch+1}, batch {batch_idx}: {e}", exc_info=True)
-                    # Optionally break or continue depending on desired fault tolerance
-                    break
-        # Signal that local training is done by stopping iteration
-        logger.debug(f"Client {self.client_id} finished train_step.")
-        return # Ends the generator
-
-    def forward_pass(self, data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Performs the client-side forward pass, stores activations, adds noise.
-
-        Args:
-            data: Input data batch.
-
-        Returns:
-            A tuple containing:
-            - noisy_smashed_data: Activations from the cut layer with Laplacian noise added.
-            - original_smashed_data: Activations *before* noise (needed for backward pass).
-        """
-        self.model.train() # Ensure model is in training mode
-        data = data.to(self.device)
-
-        # Forward pass through client model
-        smashed_data = self.model(data)
-
-        # Store original smashed data (with grad_fn) for the backward pass
-        self._current_smashed_data = smashed_data
-
-        # --- Apply Noise Mechanism 1: Laplacian Noise on Smashed Data --- #
-        noisy_smashed_data = add_laplacian_noise(
-            smashed_data.detach().clone(), # Apply noise on detached copy
-            self.laplacian_sensitivity,
-            self.laplacian_epsilon_prime
-        )
-
-        # logger.debug(f"Client {self.client_id}: Forward pass done. Smashed shape: {smashed_data.shape}, Noisy shape: {noisy_smashed_data.shape}")
-        return noisy_smashed_data, smashed_data # Return both noisy (for server) and original (for client backward)
-
-    # Modified: Now performs backward pass and prepares model for optimizer step
-    # but doesn't return gradients. Called by apply_gradients.
-    def _internal_backward_pass(self, grad_activation: torch.Tensor):
-        """
-        Performs the client-side backward pass using stored activations.
-        Applies Mechanism 2 (clipping, noise) if applicable (manual DP case).
-        Sets gradients on the model parameters, ready for optimizer.step().
-
-        Args:
-            grad_activation: Gradients received from the Main Server w.r.t. the
-                             *original* (non-noisy) smashed data.
-        """
-        if self._current_smashed_data is None:
-             raise RuntimeError(f"Client {self.client_id}: Backward pass called before forward pass or smashed data not stored.")
-
-        if not self._current_smashed_data.requires_grad:
-             logger.warning(f"Client {self.client_id}: Smashed data does not require grad. Skipping backward pass.")
-             # Ensure gradients are zero if skipping
-             self.optimizer.zero_grad(set_to_none=True)
-             return
-
-        grad_activation = grad_activation.to(self.device)
-
-        # Perform backward pass from server grad into client model
-        # This calculates gradients for WC parameters
-        self.optimizer.zero_grad() # Zero grads before backward
-        # Use the original smashed data that requires grad
-        self._current_smashed_data.backward(gradient=grad_activation)
-
-        # --- Apply Noise Mechanism 2: Per-sample Clipping & Gaussian Noise --- #
-        # This step depends on whether we are using Opacus (which handles DP in optimizer.step)
-        # or a manual mode like SFLV1/V2.
-        # The current structure assumes Opacus handles it if dp_mode == 'vanilla'.
-        # If manual DP modes were fully implemented, clipping/noise would happen here before optimizer.step.
-        # For SFLV1, apply_dp_mechanism2 was used, but it returned gradients instead of modifying them in-place.
-        # For simplicity with the current training loop, we assume DP is handled by Opacus DPOptimizer if applicable.
-        # If args.dp_mode requires manual DP, this part needs implementation.
-        if self.use_privacy_accountant and not isinstance(self.optimizer, optim.Optimizer):
-             # Example: Check if optimizer is NOT a standard PyTorch one, implies Opacus wrapper
-             logger.debug(f"Client {self.client_id}: Assuming Opacus DPOptimizer handles clipping/noise.")
-             pass # Opacus DPOptimizer.step() will handle it
-
-        # Gradients are now computed and stored in model parameters (potentially modified by DP logic above)
-
-        # Clear stored smashed data after use
-        self._current_smashed_data = None
-
-        # --- Update Privacy Accountant (if enabled) --- #
-        if self.accountant:
-             # Record one step IF DP-SGD was actually performed.
-             # This depends on whether Opacus DPOptimizer is used or manual DP applied.
-             # If using Opacus, it handles accounting internally. Manual needs explicit step.
-             # For now, we optimistically step if accountant exists (manual or Opacus).
-             # Opacus accountant might be stepped internally too, check Opacus docs.
-             try:
-                 self.accountant.step(steps=1)
-             except AttributeError:
-                  # Handle case where accountant is from Opacus and doesn't have manual step
-                  pass
-             except Exception as e:
-                  logger.error(f"Error stepping accountant for client {self.client_id}: {e}")
-
-        logger.debug(f"Client {self.client_id}: Internal backward pass done.")
-
-        # Return nothing, gradients are set on the model
-
-    # Modified signature to only take grad_activation
-    def apply_gradients(self, grad_activation: torch.Tensor):
-        """
-        Applies gradients received from the server and updates the client model.
-        Calls internal backward pass and then optimizer.step().
-        Adapts client for the loop in experiments/train_sfl_dp.py.
-
-        Args:
-            grad_activation: Gradients received from the Main Server w.r.t. the
-                             *original* (non-noisy) smashed data.
-        Returns:
-             Optional[dict]: Feedback metrics (e.g., gradient norm) - currently returns None.
-        """
-        # Perform backward pass to compute gradients for client model (WC)
-        self._internal_backward_pass(grad_activation)
-
-        # Update client model parameters
-        # This step applies the gradients (potentially clipped/noised by DPOptimizer)
-        self.optimizer.step()
-
-        logger.debug(f"Client {self.client_id}: Applied gradients and updated model.")
-
-        # TODO: Optionally compute and return feedback metrics like avg grad norm
-        # Requires accessing gradients before optimizer step, potentially complex with Opacus.
-        feedback = None
-        return feedback
-
-    def update_model(self, global_client_model_state_dict):
-         """Receives the updated global client model state from Fed Server."""
-         self.model.load_state_dict(global_client_model_state_dict)
-         # logger.debug(f"Client {self.client_id}: Updated model from Fed Server.")
-
-    def get_model_part(self):
-         """Returns the current state of the client model part."""
-         # Return a deep copy to prevent external modification?
-         return deepcopy(self.model)
-
-    def get_privacy_spent(self, delta: float) -> Optional[Tuple[float, float]]:
-        """Returns the current (epsilon, delta) privacy budget spent, if accountant is enabled."""
-        if self.accountant:
-            return self.accountant.get_privacy_spent(delta)
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Creates the optimizer for the client-side model (WC)."""
+        lr = self.config.get('lr', 0.01)
+        optimizer_name = self.config.get('optimizer', 'SGD').lower()
+        if optimizer_name == 'sgd':
+            return optim.SGD(self.client_model.parameters(), lr=lr)
+        elif optimizer_name == 'adam':
+            return optim.Adam(self.client_model.parameters(), lr=lr)
         else:
-            return None
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
+    def set_model_params(self, global_params: OrderedDict):
+        """Updates the local client model (WC) with parameters from the FedServer."""
+        self.client_model.load_state_dict(global_params)
 
-# Removed DP related methods (get_feedback_metric, calculate_new_dp_params) 
+    def update_noise_scale(self, new_sigma: float):
+        """Updates the current noise scale sigma_t."""
+        self._current_sigma = new_sigma
+
+    def _calculate_adaptive_clip_threshold(self) -> float:
+        """Calculates the adaptive clipping threshold Ck_t for the current round."""
+        if self._prev_round_grad_norms is None:
+            # First round: use initial threshold
+            return self.config['dp_noise']['clip_norm']
+        
+        # Calculate mean norm from previous round
+        mean_norm = torch.mean(torch.tensor(self._prev_round_grad_norms, device=self.device))
+        # Apply adaptive factor
+        adaptive_factor = self.config['dp_noise']['adaptive_clipping_factor']
+        return float(adaptive_factor * mean_norm)
+
+    def local_forward_pass(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Performs the forward pass on the client model (WC) using one batch of local data.
+        Applies Laplacian noise to the activations before returning.
+        """
+        try:
+            data, labels = next(iter(self.dataloader))
+        except StopIteration:
+            print(f"Client {self.client_id}: Dataloader exhausted. Re-initializing for simulation.")
+            self.dataloader = DataLoader(self.dataloader.dataset, batch_size=self.config['batch_size'], shuffle=True)
+            data, labels = next(iter(self.dataloader))
+
+        data, labels = data.to(self.device), labels.to(self.device)
+        self._data_batch = data
+        self._labels_batch = labels
+
+        self.optimizer.zero_grad()
+        activations = self.client_model(data)
+
+        # Laplacian Noise (Mechanism 1)
+        sensitivity = self.config['dp_noise']['laplacian_sensitivity']
+        epsilon_prime = self.config['dp_noise']['epsilon_prime']
+
+        if sensitivity > 0:
+            noisy_activations = noise_utils.add_laplacian_noise(
+                activations,
+                sensitivity,
+                epsilon_prime,
+                device=self.device
+            )
+        else:
+            noisy_activations = activations
+
+        self._activations_for_backward = noisy_activations
+        return noisy_activations.detach().clone(), labels.clone()
+
+    def local_backward_pass(self, activation_grads: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Performs the backward pass with adaptive clipping and noise.
+        """
+        if self._activations_for_backward is None or self._data_batch is None:
+            raise RuntimeError("Client must perform forward pass before backward pass.")
+
+        # Calculate adaptive clipping threshold for this round
+        self._current_clip_threshold = self._calculate_adaptive_clip_threshold()
+        
+        summed_clipped_grads = OrderedDict([(name, torch.zeros_like(param)) 
+                                          for name, param in self.client_model.named_parameters() 
+                                          if param.requires_grad])
+        
+        batch_size = self._data_batch.size(0)
+        activation_grads = activation_grads.to(self.device)
+        current_round_grad_norms = [] # Store norms for next round's threshold calculation
+
+        # Per-sample gradient computation with adaptive clipping
+        for i in range(batch_size):
+            self.optimizer.zero_grad()
+            sample_activation = self._activations_for_backward[i:i+1]
+            sample_activation_grad = activation_grads[i:i+1]
+            
+            sample_activation.backward(gradient=sample_activation_grad, retain_graph=True)
+            
+            # Calculate L2 norm of gradients for this sample
+            total_norm_sq = torch.zeros(1, device=self.device)
+            for name, param in self.client_model.named_parameters():
+                if param.grad is not None:
+                    total_norm_sq += param.grad.norm(2).item() ** 2
+            
+            total_norm = torch.sqrt(total_norm_sq)
+            current_round_grad_norms.append(total_norm.item())
+            
+            # Clip gradients using adaptive threshold
+            clip_coef = min(1.0, self._current_clip_threshold / (total_norm + 1e-6))
+            
+            for name, param in self.client_model.named_parameters():
+                if param.grad is not None:
+                    summed_clipped_grads[name] += param.grad.data * clip_coef
+
+        # Store gradient norms for next round's threshold calculation
+        self._prev_round_grad_norms = current_round_grad_norms
+
+        # Add Gaussian noise with adaptive scale
+        noisy_gradients = OrderedDict()
+        if self._current_sigma > 0:
+            for name, summed_grad in summed_clipped_grads.items():
+                noisy_gradients[name] = noise_utils.add_gaussian_noise(
+                    summed_grad,
+                    self._current_clip_threshold,
+                    self._current_sigma,
+                    device=self.device
+                )
+        else:
+            noisy_gradients = summed_clipped_grads
+
+        # Clear intermediate values
+        self._activations_for_backward = None
+        self._data_batch = None
+        self._labels_batch = None
+        self.optimizer.zero_grad()
+
+        return noisy_gradients
+
+    # Optional: If clients also update their models locally after backward pass
+    # def local_update(self, gradients): # Needs adjustment based on SFL protocol
+    #     self.optimizer.zero_grad()
+    #     with torch.no_grad():
+    #         for name, param in self.client_model.named_parameters():
+    #             if name in gradients:
+    #                 param.grad = gradients[name]
+    #     self.optimizer.step() 

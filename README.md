@@ -18,38 +18,39 @@ This project implements a simulation framework for Secure Split Federated Learni
 ## File Structure
 
 ```
-secure-sfl-framework/
-│
-├── configs/                 # Configuration files (e.g., default.yaml)
-├── data/                    # Placeholder for downloaded datasets
-├── experiments/             # Main training and evaluation scripts
-│   └── train_secure_sfl.py
-├── src/                     # Source code
+Comp430_Project/
+├── .git/
+├── .gitignore
+├── configs/             # Configuration files (e.g., default.yaml)
+├── data/                # Placeholder for downloaded datasets
+├── datasets/            # Data loading and partitioning (from src)
 │   ├── __init__.py
-│   ├── datasets/            # Data loading and partitioning
-│   │   ├── __init__.py
-│   │   └── data_loader.py
-│   ├── dp/                  # Differential privacy components
-│   │   ├── __init__.py
-│   │   ├── noise_utils.py   # MANUAL noise functions
-│   │   └── privacy_accountant.py # MANUAL accountant class
-│   ├── models/              # Model definitions and splitting logic
-│   │   ├── __init__.py
-│   │   ├── simple_cnn.py    # Example model
-│   │   └── split_utils.py   # Model splitting functions/class
-│   ├── sfl/                 # SFL core components
-│   │   ├── __init__.py
-│   │   ├── client.py
-│   │   ├── main_server.py
-│   │   ├── fed_server.py
-│   │   └── aggregation.py   # FedAvg implementation
-│   └── utils/               # Utility functions
-│       ├── __init__.py
-│       └── config_parser.py # Argparse or config file loading
-├── tests/                   # Unit tests (Optional but Recommended)
-├── requirements.txt         # Python dependencies
-├── README.md                # Project overview, setup, execution instructions
-└── .gitignore
+│   └── data_loader.py
+├── dp/                  # Differential privacy components (from src)
+│   ├── __init__.py
+│   ├── noise_utils.py
+│   └── privacy_accountant.py
+├── experiments/         # Main training and evaluation scripts
+│   ├── __init__.py
+│   └── train_secure_sfl.py
+├── Instructions.md
+├── models/              # Model definitions and splitting logic (from src)
+│   ├── __init__.py
+│   ├── simple_cnn.py
+│   └── split_utils.py
+├── Papers/
+├── README.md
+├── requirements.txt
+├── sfl/                 # SFL core components (from src)
+│   ├── __init__.py
+│   ├── aggregation.py
+│   ├── client.py
+│   ├── fed_server.py
+│   └── main_server.py
+├── tests/               # Unit tests (Optional but Recommended)
+└── utils/               # Utility functions (from src)
+    ├── __init__.py
+    └── config_parser.py
 ```
 
 ## Setup
@@ -57,7 +58,7 @@ secure-sfl-framework/
 1.  **Clone the repository:**
     ```bash
     git clone <repository-url>
-    cd secure-sfl-framework
+    cd Comp430_Project
     ```
 2.  **Create a Python environment:** (Recommended)
     ```bash
@@ -93,10 +94,16 @@ Modify the `configs/default.yaml` file or create new configuration files for dif
 
 ## Running Experiments
 
+Ensure you are in the `Comp430_Project` root directory.
+
 To run the main training script:
 
 ```bash
+# Option 1: Run directly (should work with updated imports)
 python experiments/train_secure_sfl.py --config configs/default.yaml
+
+# Option 2: Run as a module (might still be needed depending on environment)
+# python -m experiments.train_secure_sfl --config configs/default.yaml
 ```
 
 You can specify a different configuration file using the `--config` argument.

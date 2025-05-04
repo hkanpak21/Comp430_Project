@@ -1,0 +1,36 @@
+# Experiment Configuration (DNN Model)
+seed: 42
+dataset: "MNIST"
+model: "SimpleDNN" # Specify DNN model
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 10
+batch_size: 64
+num_rounds: 50 # Use 50 rounds for potentially better accuracy
+
+# Model & Training
+lr: 0.01 # Use 0.01
+optimizer: "Adam" # Use Adam
+cut_layer: 4 # Split after fc2 + relu2 (indices: 0=Flatten, 1=fc1, 2=relu1, 3=fc2, 4=relu2)
+
+# Differential Privacy Noise Parameters
+dp_noise:
+  # Laplacian Noise (Mechanism 1) - Unchanged
+  laplacian_sensitivity: 0.0
+  epsilon_prime: 1.0
+  
+  # Gaussian Noise (Mechanism 2) - Adaptive Parameters
+  clip_norm: 1.0  # Initial clipping threshold
+  noise_multiplier: 0.0  # Initial noise scale
+  delta: 1e-5
+  
+  # New Adaptive Parameters
+  adaptive_clipping_factor: 1.0  # alpha in Fu et al.
+  initial_sigma: 1.0  # Starting global noise scale sigma_0
+  adaptive_noise_decay_factor: 0.999  # beta in Fu et al.
+  noise_decay_patience: 3  # Number of consecutive loss decreases required
+  validation_set_ratio: 0.1  # Portion of data held out for validation
+
+# Logging
+log_interval: 10 

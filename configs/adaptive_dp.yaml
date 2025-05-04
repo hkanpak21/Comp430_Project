@@ -1,0 +1,35 @@
+# Experiment Configuration (Adaptive DP - DNN Model)
+seed: 42
+dataset: "MNIST"
+model: "SimpleDNN"
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 10
+batch_size: 64
+num_rounds: 50
+
+# Model & Training
+lr: 0.01
+optimizer: "Adam"
+cut_layer: 4
+
+# Differential Privacy Noise Parameters (ADAPTIVE Gaussian)
+dp_noise:
+  laplacian_sensitivity: 0.0 # Laplacian disabled
+  epsilon_prime: 1.0
+  
+  # Parameters used by Adaptive Mechanism 2
+  clip_norm: 1.0             # Used as *initial* Ck_0
+  noise_multiplier: 0.0      # Not directly used for noise addition (sigma_t is used)
+  delta: 1e-5
+  
+  # Adaptive Parameters
+  adaptive_clipping_factor: 1.0
+  initial_sigma: 1.0             # Starting noise scale (same as fixed test)
+  adaptive_noise_decay_factor: 0.99 # Decay factor (e.g., 0.99)
+  noise_decay_patience: 3           # Rounds of loss decrease
+  validation_set_ratio: 0.1
+
+# Logging
+log_interval: 10 
