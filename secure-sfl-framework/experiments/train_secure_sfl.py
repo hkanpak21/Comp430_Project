@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
 import sys
 import os
-# Add the project root directory to the Python path
+# Add the project root directory to the Python path if running directly
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
@@ -12,9 +13,10 @@ import time
 import copy # For deep copying models
 from collections import OrderedDict # Import OrderedDict
 
+# Imports relative to src within secure-sfl-framework
 from src.utils.config_parser import get_config
 from src.datasets.data_loader import get_mnist_dataloaders, get_client_data_loaders
-from src.models.simple_cnn import get_model
+from src.models import get_model # Import from models package
 from src.models.split_utils import split_model, get_combined_model
 from src.dp.privacy_accountant import ManualPrivacyAccountant
 from src.sfl.client import SFLClient
@@ -106,7 +108,6 @@ def main():
         global_client_params = fed_server.get_client_model_params()
         for client in clients:
             client.set_model_params(global_client_params)
-        # print("FedServer distributed WC parameters to clients.")
 
         client_activation_grads = {} # Store {client_id: grad_Ak,t}
         client_noisy_wc_grads = []   # Store noisy ∇WCk,t from clients
@@ -119,18 +120,15 @@ def main():
         for client in clients:
             noisy_activations, labels = client.local_forward_pass()
             client_data_for_main_server[client.client_id] = (noisy_activations, labels)
-            # print(f"Client {client.client_id}: Forward pass complete. Sending activations/labels.")
 
         # MainServer receives data from all clients
         for client_id, (noisy_acts, lbls) in client_data_for_main_server.items():
             main_server.receive_client_data(client_id, noisy_acts, lbls)
-        # print("MainServer received data from all clients.")
 
         # MainServer processes each client's data and sends back activation grads
         for client_id in client_data_for_main_server.keys():
             act_grad = main_server.forward_backward_pass(client_id)
             client_activation_grads[client_id] = act_grad
-            # print(f"MainServer processed Client {client_id}, sending back activation gradients.")
 
         # 2. MainServer aggregates WS gradients and updates WS model
         main_server.aggregate_and_update()
@@ -146,18 +144,15 @@ def main():
 
                 # 4. Update Privacy Accountant only if noise is enabled (Mechanism 2)
                 if noise_multiplier > 0:
-                    # Each client processes one batch per round in this simple simulation
                     privacy_accountant.step(noise_multiplier=noise_multiplier,
                                             sampling_rate=sampling_rate,
                                             num_steps=1)
-                # print(f"Client {client.client_id}: Backward pass complete. Sending noisy WC gradients.")
             else:
                 print(f"Warning: No activation gradient received for Client {client.client_id}")
 
         # 5. FedServer receives noisy client gradients (∇WCk,t)
         for noisy_grad in client_noisy_wc_grads:
             fed_server.receive_client_update(noisy_grad)
-        # print("FedServer received noisy WC gradients from clients.")
 
         # 6. FedServer aggregates noisy gradients and updates global WC model
         fed_server.aggregate_updates()
@@ -167,8 +162,13 @@ def main():
 
         # Optional: Log progress (e.g., privacy budget) periodically
         if (round_num + 1) % config.get('log_interval', 10) == 0:
-            epsilon, _ = privacy_accountant.get_privacy_spent(delta=target_delta)
-            print(f"Round {round_num + 1}: Current Privacy Budget (ε, δ={target_delta}): ({epsilon:.4f}, {target_delta})")
+            # Avoid calling accountant if noise_multiplier is 0
+            if noise_multiplier > 0:
+                epsilon, _ = privacy_accountant.get_privacy_spent(delta=target_delta)
+                print(f"Round {round_num + 1}: Current Privacy Budget (ε, δ={target_delta}): ({epsilon:.4f}, {target_delta})")
+            else:
+                print(f"Round {round_num + 1}: Noise disabled, privacy budget not tracked.")
+
 
     # --- Training Complete ---
     total_time = time.time() - start_time
@@ -205,8 +205,12 @@ def main():
         test_accuracy = None
 
     # --- Final Privacy Budget ---
-    final_epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
-    print(f"Final Privacy Budget (ε, δ) for Mechanism 2 (Gaussian): ({final_epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
+    # Avoid calling accountant if noise_multiplier is 0
+    if noise_multiplier > 0:
+        final_epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
+        print(f"Final Privacy Budget (ε, δ) for Mechanism 2 (Gaussian): ({final_epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
+    else:
+        print("Final Privacy Budget: Noise disabled for Mechanism 2.")
 
 if __name__ == "__main__":
     main() 
