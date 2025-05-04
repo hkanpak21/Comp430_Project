@@ -78,6 +78,72 @@ class FedServer:
                 total_loss += loss.item()
         return total_loss / len(validation_loader)
 
+    def evaluate_metrics(self, validation_loader, main_server=None) -> tuple:
+        """
+        Evaluates and prints both validation loss and accuracy.
+        If main_server is provided, evaluates the complete model (client+server).
+        Otherwise, just evaluates the client part (which will show poor metrics).
+        
+        Args:
+            validation_loader: DataLoader for validation set
+            main_server: Optional MainServer instance to evaluate complete model
+            
+        Returns:
+            tuple: (validation_loss, accuracy)
+        """
+        self.client_model.eval()
+        total_loss = 0.0
+        correct = 0
+        total = 0
+        
+        # Check if we can evaluate complete model
+        evaluate_complete = main_server is not None
+        
+        if evaluate_complete:
+            # Get server model
+            server_model = main_server.get_server_model()
+            server_model.eval()
+        
+        with torch.no_grad():
+            for data, labels in validation_loader:
+                data, labels = data.to(self.device), labels.to(self.device)
+                
+                # Forward pass through client model
+                client_outputs = self.client_model(data)
+                
+                if evaluate_complete:
+                    # Complete forward pass through server model
+                    outputs = server_model(client_outputs)
+                    loss = main_server.get_criterion()(outputs, labels)
+                    
+                    # Calculate accuracy
+                    _, predicted = torch.max(outputs.data, 1)
+                else:
+                    # Just use client outputs (which aren't actual predictions)
+                    outputs = client_outputs
+                    # Using CrossEntropyLoss directly on activations doesn't make sense
+                    # but keeping it to maintain backward compatibility
+                    loss = self._criterion(outputs, labels)
+                    
+                    # This won't be meaningful but keeping for compatibility
+                    _, predicted = torch.max(outputs.data, 1)
+                
+                total_loss += loss.item()
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+        
+        avg_loss = total_loss / len(validation_loader)
+        accuracy = 100 * correct / total
+        
+        print(f"\nValidation Metrics:")
+        if evaluate_complete:
+            print(f"Complete Model - Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
+        else:
+            print(f"Client Model Only (incomplete) - Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
+            print(f"Warning: These metrics are for the client model part only and don't reflect actual performance.")
+        
+        return avg_loss, accuracy
+
     def _update_noise_scale(self, validation_loss: float):
         """
         Updates the noise scale based on validation loss trend.
@@ -103,11 +169,15 @@ class FedServer:
         """Returns the current noise scale sigma_t."""
         return self._current_sigma
 
-    def aggregate_updates(self, validation_loader=None):
+    def aggregate_updates(self, validation_loader=None, main_server=None):
         """
         Aggregates the received client updates using FedAvg and updates the global client model (WC)
         using its optimizer.
         Clears the stored updates after aggregation.
+        
+        Args:
+            validation_loader: Optional dataloader for validation
+            main_server: Optional MainServer instance to evaluate complete model
         """
         if not self._client_updates:
             print("FedServer: No client updates received for aggregation.")
@@ -132,9 +202,9 @@ class FedServer:
 
         self.optimizer.step() # Update parameters using assigned gradients
 
-        # Update noise scale if validation loader is provided
+        # Update noise scale and evaluate metrics if validation loader is provided
         if validation_loader is not None:
-            validation_loss = self.evaluate_validation_loss(validation_loader)
+            validation_loss, accuracy = self.evaluate_metrics(validation_loader, main_server)
             self._update_noise_scale(validation_loss)
 
         # Clear updates for the next round

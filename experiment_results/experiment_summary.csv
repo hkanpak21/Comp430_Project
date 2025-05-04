@@ -1,0 +1,5 @@
+Model,DP Type,Final Test Accuracy (%),Final Validation Accuracy (%),Final Validation Loss,Privacy Budget (ε),Final Noise Scale (σ),Completed Rounds,Execution Time (s)
+CNN,Adaptive,17.59,19.22,2.2511,2.5944,0.6298,0,188.16
+CNN,Fixed,14.86,15.53,2.2382,0.9706,1.0,0,194.63
+DNN,Adaptive,15.86,17.47,2.2827,2.5944,0.6298,0,21.0
+DNN,Fixed,15.18,16.27,2.2772,0.9706,1.0,0,21.31

@@ -17,14 +17,14 @@ import copy
 from collections import OrderedDict
 
 # Imports for flattened structure
-from utils.config_parser import get_config
-from datasets.data_loader import get_mnist_dataloaders, get_client_data_loaders
-from models import get_model # Import from models package
-from models.split_utils import split_model, get_combined_model
-from dp.privacy_accountant import ManualPrivacyAccountant
-from sfl.client import SFLClient
-from sfl.main_server import MainServer
-from sfl.fed_server import FedServer
+from src.utils.config_parser import get_config
+from src.datasets.data_loader import get_mnist_dataloaders, get_client_data_loaders
+from src.models import get_model # Import from models package
+from src.models.split_utils import split_model, get_combined_model
+from src.dp.privacy_accountant import ManualPrivacyAccountant
+from src.sfl.client import SFLClient
+from src.sfl.main_server import MainServer
+from src.sfl.fed_server import FedServer
 
 def set_seed(seed):
     """Sets random seeds for reproducibility."""
@@ -156,7 +156,7 @@ def main():
             fed_server.receive_client_update(noisy_grad)
 
         # Aggregate updates and update noise scale based on validation loss
-        fed_server.aggregate_updates(validation_loader)
+        fed_server.aggregate_updates(validation_loader, main_server=main_server)
         
         round_end_time = time.time()
         print(f"--- Round {round_num + 1} finished in {round_end_time - round_start_time:.2f} seconds ---")
