@@ -57,7 +57,7 @@ Comp430_Project/
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/hkanpak21/Comp430_Project.git
     cd Comp430_Project
     ```
 2.  **Create a Python environment:** (Recommended)
