@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
 # Environment
 .env
 .venv
@@ -23,4 +24,7 @@ data/
 *.log
 
 # Misc
-.DS_Store 
+.DS_Store
+
+# Project Specific
+Instructions.md 
