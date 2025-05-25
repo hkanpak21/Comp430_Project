@@ -23,3 +23,8 @@ def get_config():
     config = load_config(args.config)
     # You might want to add schema validation or default value handling here
     return config 
+
+def get_config_from_file(config_path):
+    """Loads configuration directly from a specified file path."""
+    config = load_config(config_path)
+    return config

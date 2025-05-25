@@ -1,0 +1,228 @@
+Configuration loaded: {'seed': 42, 'dataset': 'MNIST', 'model': 'SimpleCNN', 'data_dir': './data', 'num_clients': 1, 'batch_size': 64, 'num_rounds': 20, 'lr': 0.01, 'optimizer': 'Adam', 'cut_layer': 3, 'dp_noise': {'laplacian_sensitivity': 0.0, 'epsilon_prime': 1.0, 'clip_norm': 0.0, 'noise_multiplier': 0.0, 'delta': '1e-5', 'adaptive_clipping_factor': 0.0, 'initial_sigma': 0.0, 'adaptive_noise_decay_factor': 0.99, 'noise_decay_patience': 1, 'validation_set_ratio': 0.1}, 'log_interval': 1}
+Using device: cpu
+Loaded MNIST dataset and created 1 client data loaders.
+Created validation set with 6000 samples.
+Split model 'SimpleCNN' at layer index 3.
+Client model part: Sequential(
+  (0): Conv2d(1, 10, kernel_size=(5, 5), stride=(1, 1))
+  (1): ReLU()
+  (2): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+  (3): Conv2d(10, 20, kernel_size=(5, 5), stride=(1, 1))
+)
+Server model part: Sequential(
+  (0): ReLU()
+  (1): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+  (2): Flatten(start_dim=1, end_dim=-1)
+  (3): Linear(in_features=320, out_features=50, bias=True)
+  (4): ReLU()
+  (5): Linear(in_features=50, out_features=10, bias=True)
+)
+Initialized 1 SFL clients.
+Initialized Manual Privacy Accountant. Sampling rate (q): 0.0012, Target Delta: 1e-05
+
+Starting SFLV1 training for 20 rounds...
+
+--- Round 1/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3149 | Accuracy: 10.72%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 1 finished in 0.68 seconds ---
+Round 1: Noise disabled, privacy budget not tracked.
+
+--- Round 2/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.2464 | Accuracy: 30.97%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 2 finished in 0.71 seconds ---
+Round 2: Noise disabled, privacy budget not tracked.
+
+--- Round 3/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.1967 | Accuracy: 28.63%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 3 finished in 0.67 seconds ---
+Round 3: Noise disabled, privacy budget not tracked.
+
+--- Round 4/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.1209 | Accuracy: 33.08%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 4 finished in 0.66 seconds ---
+Round 4: Noise disabled, privacy budget not tracked.
+
+--- Round 5/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.0484 | Accuracy: 41.80%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 5 finished in 0.67 seconds ---
+Round 5: Noise disabled, privacy budget not tracked.
+
+--- Round 6/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.9643 | Accuracy: 50.48%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 6 finished in 0.67 seconds ---
+Round 6: Noise disabled, privacy budget not tracked.
+
+--- Round 7/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.8759 | Accuracy: 57.65%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 7 finished in 0.67 seconds ---
+Round 7: Noise disabled, privacy budget not tracked.
+
+--- Round 8/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.7948 | Accuracy: 61.43%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 8 finished in 0.68 seconds ---
+Round 8: Noise disabled, privacy budget not tracked.
+
+--- Round 9/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.7235 | Accuracy: 55.78%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 9 finished in 0.66 seconds ---
+Round 9: Noise disabled, privacy budget not tracked.
+
+--- Round 10/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.6427 | Accuracy: 57.53%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 10 finished in 0.68 seconds ---
+Round 10: Noise disabled, privacy budget not tracked.
+
+--- Round 11/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.5671 | Accuracy: 58.25%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 11 finished in 0.66 seconds ---
+Round 11: Noise disabled, privacy budget not tracked.
+
+--- Round 12/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.4943 | Accuracy: 59.67%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 12 finished in 0.66 seconds ---
+Round 12: Noise disabled, privacy budget not tracked.
+
+--- Round 13/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.4106 | Accuracy: 63.98%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 13 finished in 0.66 seconds ---
+Round 13: Noise disabled, privacy budget not tracked.
+
+--- Round 14/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.3139 | Accuracy: 71.00%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 14 finished in 0.66 seconds ---
+Round 14: Noise disabled, privacy budget not tracked.
+
+--- Round 15/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.2388 | Accuracy: 75.10%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 15 finished in 0.67 seconds ---
+Round 15: Noise disabled, privacy budget not tracked.
+
+--- Round 16/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.1832 | Accuracy: 74.42%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 16 finished in 0.67 seconds ---
+Round 16: Noise disabled, privacy budget not tracked.
+
+--- Round 17/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.1412 | Accuracy: 69.10%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 17 finished in 0.67 seconds ---
+Round 17: Noise disabled, privacy budget not tracked.
+
+--- Round 18/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.0986 | Accuracy: 68.42%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 18 finished in 0.67 seconds ---
+Round 18: Noise disabled, privacy budget not tracked.
+
+--- Round 19/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 1.0358 | Accuracy: 71.80%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 19 finished in 0.67 seconds ---
+Round 19: Noise disabled, privacy budget not tracked.
+
+--- Round 20/20 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 0.9722 | Accuracy: 75.05%
+FedServer: Loss decreasing for 1 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 20 finished in 0.67 seconds ---
+Round 20: Noise disabled, privacy budget not tracked.
+
+SFL Training finished in 13.38 seconds.
+
+Evaluating final model...
+Final Test Accuracy: 75.96%
+Final Privacy Budget: Noise disabled for Mechanism 2.

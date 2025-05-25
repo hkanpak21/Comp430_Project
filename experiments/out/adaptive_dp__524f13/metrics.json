@@ -1,0 +1,8 @@
+{
+  "final_test_acc": 0.1586,
+  "epsilon": 2.5943706341328556,
+  "delta": 1e-05,
+  "sigma": 0.6298236312032323,
+  "sigma_init": 1.0,
+  "rounds": 50
+}

@@ -1,0 +1,37 @@
+Configuration loaded: {'seed': 42, 'dataset': 'MNIST', 'model': 'SimpleDNN', 'data_dir': './data', 'num_clients': 1, 'batch_size': 64, 'num_rounds': 1, 'lr': 0.01, 'optimizer': 'SGD', 'cut_layer': 4, 'min_acc': 0.75, 'dp_noise': {'laplacian_sensitivity': 0.0, 'epsilon_prime': 0.0, 'clip_norm': 1.0, 'noise_multiplier': 0.0, 'delta': '1e-5', 'adaptive_clipping_factor': 1.0, 'initial_sigma': 0.0, 'adaptive_noise_decay_factor': 1.0, 'noise_decay_patience': 0, 'validation_set_ratio': 0.1}, 'log_interval': 1}
+Using device: cpu
+Loaded MNIST dataset and created 1 client data loaders.
+Created validation set with 6000 samples.
+Split model 'SimpleDNN' at layer index 4.
+Client model part: Sequential(
+  (0): Flatten(start_dim=1, end_dim=-1)
+  (1): Linear(in_features=784, out_features=128, bias=True)
+  (2): ReLU()
+  (3): Linear(in_features=128, out_features=128, bias=True)
+  (4): ReLU()
+)
+Server model part: Sequential(
+  (0): Linear(in_features=128, out_features=32, bias=True)
+  (1): ReLU()
+  (2): Linear(in_features=32, out_features=10, bias=True)
+)
+Initialized 1 SFL clients.
+Initialized Manual Privacy Accountant. Sampling rate (q): 0.0012, Target Delta: 1e-05
+
+Starting SFLV1 training for 1 rounds...
+
+--- Round 1/1 ---
+MainServer: Aggregated 1 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3046 | Accuracy: 10.13%
+FedServer: Loss decreasing for 0 rounds. Updated noise scale to 0.0000
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 1 finished in 0.25 seconds ---
+Round 1: Noise disabled, privacy budget not tracked.
+
+SFL Training finished in 0.25 seconds.
+
+Evaluating final model...
+Final Test Accuracy: 9.36%
+Final Privacy Budget: Noise disabled for Mechanism 2.

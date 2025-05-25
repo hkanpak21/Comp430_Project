@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import sys
 import os
+import argparse
+import json
+import pathlib
 # Add the project root directory (Comp430_Project) to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
-# print(f"DEBUG: Inserted into sys.path: {project_root}") # Debug print - Can be removed later
-# print(f"DEBUG: Current sys.path[0]: {sys.path[0]}") # Debug print - Can be removed later
-print("DEBUG: sys.path BEFORE import:", sys.path) # Print full sys.path
 
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ import copy
 from collections import OrderedDict
 
 # Imports for flattened structure
-from src.utils.config_parser import get_config
+from src.utils.config_parser import get_config_from_file as get_config
 from src.datasets.data_loader import get_mnist_dataloaders, get_client_data_loaders
 from src.models import get_model # Import from models package
 from src.models.split_utils import split_model, get_combined_model
@@ -50,8 +50,21 @@ def evaluate_model(model, test_loader, device):
     accuracy = 100 * correct / total
     return accuracy
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Secure Split Federated Learning')
+    parser.add_argument('--config', type=str, default='configs/dnn_default.yaml', help='Path to config file')
+    parser.add_argument('--run_id', type=str, default=None, help='Run ID for storing results')
+    return parser.parse_args()
+
 def main():
-    config = get_config()
+    args = parse_args()
+    config = get_config(config_path=args.config)
+    
+    # Setup output directory for metrics
+    out_dir = None
+    if args.run_id:
+        out_dir = pathlib.Path(__file__).parent / "out" / args.run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
     print("Configuration loaded:", config)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -192,12 +205,28 @@ def main():
     else:
         test_accuracy = None
 
+    epsilon = None
     if current_sigma > 0:
-        final_epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
-        print(f"Final Privacy Budget (ε, δ) for Mechanism 2 (Gaussian): ({final_epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
+        epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
+        print(f"Final Privacy Budget (ε, δ) for Mechanism 2 (Gaussian): ({epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
         print(f"Final Noise Scale (σ): {current_sigma:.4f}")
     else:
         print("Final Privacy Budget: Noise disabled for Mechanism 2.")
+        
+    # Save metrics to JSON file
+    if out_dir:
+        initial_sigma = config['dp_noise'].get('initial_sigma', 0.0)
+        metrics = {
+            "final_test_acc": test_accuracy / 100.0 if test_accuracy is not None else None,  # Convert to decimal
+            "epsilon": epsilon,
+            "delta": target_delta,
+            "sigma": current_sigma,
+            "sigma_init": initial_sigma,
+            "rounds": num_rounds
+        }
+        metrics_file = out_dir / "metrics.json"
+        with open(metrics_file, 'w') as f:
+            json.dump(metrics, f, indent=2)
 
 if __name__ == "__main__":
     main() 
