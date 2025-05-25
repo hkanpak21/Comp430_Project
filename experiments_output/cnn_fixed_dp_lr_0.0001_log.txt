@@ -1,0 +1,210 @@
+DEBUG: sys.path BEFORE import: ['/Users/halilibrahimkanpak/Documents/Courses/SeniorSpring_1/Comp530/Comp430_Project', '/Users/halilibrahimkanpak/Documents/Courses/SeniorSpring_1/Comp530/Comp430_Project/experiments', '/opt/anaconda3/envs/zion/lib/python312.zip', '/opt/anaconda3/envs/zion/lib/python3.12', '/opt/anaconda3/envs/zion/lib/python3.12/lib-dynload', '/opt/anaconda3/envs/zion/lib/python3.12/site-packages']
+Configuration loaded: {'seed': 42, 'dataset': 'MNIST', 'model': 'SimpleCNN', 'data_dir': './data', 'num_clients': 10, 'batch_size': 64, 'num_rounds': 50, 'lr': 0.0001, 'optimizer': 'SGD', 'cut_layer': 6, 'dp_noise': {'laplacian_sensitivity': 0.0, 'epsilon_prime': 1.0, 'clip_norm': 1.0, 'noise_multiplier': 1.0, 'delta': '1e-5', 'adaptive_clipping_factor': 0.0, 'initial_sigma': 1.0, 'adaptive_noise_decay_factor': 1.0, 'noise_decay_patience': 1000, 'validation_set_ratio': 0.1}, 'log_interval': 10}
+Using device: cpu
+Loaded MNIST dataset and created 10 client data loaders.
+Created validation set with 6000 samples.
+Split model 'SimpleCNN' at layer index 6.
+Client model part: Sequential(
+  (0): Conv2d(1, 10, kernel_size=(5, 5), stride=(1, 1))
+  (1): ReLU()
+  (2): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+  (3): Conv2d(10, 20, kernel_size=(5, 5), stride=(1, 1))
+  (4): ReLU()
+  (5): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+  (6): Flatten(start_dim=1, end_dim=-1)
+)
+Server model part: Sequential(
+  (0): Linear(in_features=320, out_features=50, bias=True)
+  (1): ReLU()
+  (2): Linear(in_features=50, out_features=10, bias=True)
+)
+Initialized 10 SFL clients.
+Initialized Manual Privacy Accountant. Sampling rate (q): 0.0012, Target Delta: 1e-05
+
+Starting SFLV1 training for 50 rounds...
+
+--- Round 1/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3080 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 1 finished in 5.57 seconds ---
+
+--- Round 2/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3080 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 2 finished in 5.52 seconds ---
+
+--- Round 3/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3080 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 3 finished in 5.38 seconds ---
+
+--- Round 4/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 4 finished in 5.41 seconds ---
+
+--- Round 5/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 5 finished in 5.53 seconds ---
+
+--- Round 6/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 6 finished in 5.21 seconds ---
+
+--- Round 7/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 7 finished in 5.44 seconds ---
+
+--- Round 8/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 8 finished in 5.18 seconds ---
+
+--- Round 9/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 9 finished in 5.14 seconds ---
+
+--- Round 10/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 10 finished in 5.14 seconds ---
+Round 10: Current Privacy Budget (ε, δ=1e-05): (0.9616, 1e-05)
+Round 10: Current Noise Scale (σ): 1.0000
+
+--- Round 11/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 11 finished in 5.12 seconds ---
+
+--- Round 12/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3079 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 12 finished in 5.13 seconds ---
+
+--- Round 13/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 13 finished in 5.15 seconds ---
+
+--- Round 14/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 14 finished in 5.15 seconds ---
+
+--- Round 15/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 15 finished in 5.20 seconds ---
+
+--- Round 16/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 16 finished in 5.25 seconds ---
+
+--- Round 17/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 17 finished in 5.22 seconds ---
+
+--- Round 18/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 18 finished in 5.22 seconds ---
+
+--- Round 19/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 19 finished in 5.20 seconds ---
+
+--- Round 20/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 20 finished in 5.19 seconds ---
+Round 20: Current Privacy Budget (ε, δ=1e-05): (0.9639, 1e-05)
+Round 20: Current Noise Scale (σ): 1.0000
+
+--- Round 21/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 21 finished in 3.90 seconds ---
+
+--- Round 22/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3078 | Accuracy: 10.22%
+FedServer: Aggregated client updates and updated WC model (4 params) via optimizer.
+--- Round 22 finished in 3.90 seconds ---
+
+--- Round 23/50 ---
+MainServer: Aggregated 10 server gradients and updated WS.
+
+Validation Metrics:
+Complete Model - Loss: 2.3077 | Accuracy: 10.22%

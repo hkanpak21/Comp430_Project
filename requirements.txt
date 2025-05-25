@@ -1,3 +1,7 @@
 torch
 torchvision
-PyYAML 
+PyYAML
+pandas
+matplotlib
+seaborn
+numpy 

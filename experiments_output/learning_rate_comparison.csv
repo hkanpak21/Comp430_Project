@@ -1,0 +1,5 @@
+log_file,experiment_name,test_accuracy,final_epsilon,final_noise_scale,total_steps,training_time,model_type,dp_type,learning_rate
+experiment_logs/cnn_adaptive_dp_log.txt,cnn_adaptive_dp,17.59,2.5944,0.6298,500,188.16,CNN,Adaptive DP,unknown
+experiment_logs/cnn_fixed_dp_log.txt,cnn_fixed_dp,14.86,0.9706,1.0,500,194.63,CNN,Fixed DP,unknown
+experiment_logs/dnn_adaptive_dp_log.txt,dnn_adaptive_dp,15.86,2.5944,0.6298,500,21.0,DNN,Adaptive DP,unknown
+experiment_logs/dnn_fixed_dp_log.txt,dnn_fixed_dp,15.18,0.9706,1.0,500,21.31,DNN,Fixed DP,unknown
