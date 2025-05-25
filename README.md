@@ -31,8 +31,6 @@ Comp430_Project/
 │   ├── sfl/               # SFL components (client, servers)
 │   └── utils/             # Utility functions
 ├── Papers/                # Reference papers (archived, in .gitignore)
-├── experiment_logs/       # Experiment logs
-├── experiment_results/    # Experiment results
 └── requirements.txt       # Python dependencies
 ```
 
