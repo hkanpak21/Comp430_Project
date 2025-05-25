@@ -5,13 +5,13 @@ model: "SimpleDNN"
 data_dir: "./data"
 
 # SFL Setup
-num_clients: 10
+num_clients: 1
 batch_size: 64
 num_rounds: 50
 
 # Model & Training
 lr: 0.01
-optimizer: "Adam"
+optimizer: "SGD"
 cut_layer: 4
 
 # Differential Privacy Noise Parameters (FIXED Gaussian)
@@ -20,7 +20,7 @@ dp_noise:
   epsilon_prime: 1.0
   
   # Fixed Gaussian Parameters (Mechanism 2)
-  clip_norm: 1.0             # Fixed clipping threshold
+  clip_norm: 1000.0             # Fixed clipping threshold
   noise_multiplier: 1.0      # Fixed noise scale (sigma)
   delta: 1e-5
   

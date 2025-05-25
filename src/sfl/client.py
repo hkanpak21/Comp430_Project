@@ -61,6 +61,11 @@ class SFLClient:
 
     def _calculate_adaptive_clip_threshold(self) -> float:
         """Calculates the adaptive clipping threshold Ck_t for the current round."""
+        # Check if adaptive clipping is disabled (adaptive_clipping_factor = 0.0)
+        if self.config['dp_noise']['adaptive_clipping_factor'] == 0.0:
+            # For fixed DP, always use the initial clip norm
+            return self.config['dp_noise']['clip_norm']
+            
         if self._prev_round_grad_norms is None:
             # First round: use initial threshold
             return self.config['dp_noise']['clip_norm']

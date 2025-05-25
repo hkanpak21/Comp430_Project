@@ -11,7 +11,7 @@ num_rounds: 50 # Use 50 rounds for potentially better accuracy
 
 # Model & Training
 lr: 0.01 # Use 0.01
-optimizer: "Adam" # Use Adam
+optimizer: "SGD" # Use SGD for DP compliance
 cut_layer: 4 # Split after fc2 + relu2 (indices: 0=Flatten, 1=fc1, 2=relu1, 3=fc2, 4=relu2)
 
 # Differential Privacy Noise Parameters

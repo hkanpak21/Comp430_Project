@@ -155,3 +155,7 @@ class MainServer:
     def get_server_model(self) -> nn.Module:
         """Returns the current server model instance."""
         return self.server_model 
+
+    def get_criterion(self) -> nn.Module:
+        """Returns the criterion (loss function) used by the server."""
+        return self.criterion 
