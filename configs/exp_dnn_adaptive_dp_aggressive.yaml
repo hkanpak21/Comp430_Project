@@ -1,0 +1,32 @@
+# DNN with aggressive adaptive DP settings
+seed: 42
+dataset: "MNIST"
+model: "SimpleDNN"
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 5
+batch_size: 64
+num_rounds: 20
+
+# Model & Training
+lr: 0.001
+optimizer: "Adam"
+cut_layer: 2
+min_acc: 0.1
+
+# Differential Privacy Noise Parameters with aggressive adaptive settings
+dp_noise:
+  laplacian_sensitivity: 0.0
+  epsilon_prime: 1.0
+  clip_norm: 1.0
+  noise_multiplier: 0.3
+  delta: 1e-5
+  adaptive_clipping_factor: 2.0  # More aggressive adaptive clipping
+  initial_sigma: 0.3
+  adaptive_noise_decay_factor: 0.8  # Very fast decay
+  noise_decay_patience: 1  # Very aggressive adaptation
+  validation_set_ratio: 0.1
+
+# Logging
+log_interval: 5

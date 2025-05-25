@@ -1,0 +1,32 @@
+# DNN with many clients and large batch size
+seed: 42
+dataset: "MNIST"
+model: "SimpleDNN"
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 15  # Many clients
+batch_size: 128  # Large batch size
+num_rounds: 20
+
+# Model & Training
+lr: 0.001
+optimizer: "Adam"
+cut_layer: 2
+min_acc: 0.1
+
+# Differential Privacy Noise Parameters
+dp_noise:
+  laplacian_sensitivity: 0.0
+  epsilon_prime: 1.0
+  clip_norm: 1.0
+  noise_multiplier: 0.0  # No noise
+  delta: 1e-5
+  adaptive_clipping_factor: 1.0
+  initial_sigma: 0.0  # No noise
+  adaptive_noise_decay_factor: 0.99
+  noise_decay_patience: 3
+  validation_set_ratio: 0.1
+
+# Logging
+log_interval: 5
