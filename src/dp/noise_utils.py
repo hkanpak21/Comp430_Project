@@ -1,5 +1,8 @@
 import torch
 
+def laplace_eps(scale: float, sensitivity: float) -> float:
+    return sensitivity / scale
+
 def add_laplacian_noise(tensor, sensitivity, epsilon_prime, device='cpu'):
     """
     Adds Laplacian noise to a tensor based on sensitivity and epsilon_prime.
@@ -23,6 +26,8 @@ def add_laplacian_noise(tensor, sensitivity, epsilon_prime, device='cpu'):
         raise ValueError("Epsilon prime must be positive for Laplacian noise.")
 
     scale = sensitivity / epsilon_prime
+    assert abs(laplace_eps(scale, sensitivity) - epsilon_prime) < 1e-5, \
+        "Laplace ε′ mismatch → wrong sensitivity or ε′"
 
     # Generate Laplacian noise using PyTorch distributions
     # Alternative: Manually generate from Uniform(0,1) via inverse CDF

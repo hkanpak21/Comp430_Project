@@ -3,6 +3,7 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
 import numpy as np
 import os
+from .partition import partition_data_dirichlet
 
 def get_mnist_dataloaders(config):
     """Downloads MNIST, applies transformations, and creates DataLoaders for train and test sets."""
@@ -54,8 +55,17 @@ def get_client_data_loaders(config, train_dataset):
     """Partitions the training data and creates DataLoaders for each client."""
     num_clients = config['num_clients']
     batch_size = config['batch_size']
-
-    client_datasets = partition_data_iid(train_dataset, num_clients)
+    partition_method = config.get('partition_method', 'iid')
+    
+    if partition_method == 'dirichlet':
+        alpha = config.get('dirichlet_alpha', 1.0)
+        print(f"Using Dirichlet partition with alpha={alpha}")
+        client_datasets = partition_data_dirichlet(train_dataset, num_clients, alpha)
+    else:
+        # Default to IID partitioning
+        print("Using IID partition")
+        client_datasets = partition_data_iid(train_dataset, num_clients)
+    
     client_loaders = {}
     for client_id, dataset in client_datasets.items():
         client_loaders[client_id] = DataLoader(dataset, batch_size=batch_size, shuffle=True)

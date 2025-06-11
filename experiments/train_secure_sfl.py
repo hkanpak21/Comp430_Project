@@ -22,6 +22,7 @@ from src.datasets.data_loader import get_mnist_dataloaders, get_client_data_load
 from src.models import get_model # Import from models package
 from src.models.split_utils import split_model, get_combined_model
 from src.dp.privacy_accountant import ManualPrivacyAccountant
+from src.dp.registry import get_accountant
 from src.sfl.client import SFLClient
 from src.sfl.main_server import MainServer
 from src.sfl.fed_server import FedServer
@@ -109,12 +110,21 @@ def main():
         clients.append(client)
     print(f"Initialized {len(clients)} SFL clients.")
 
-    privacy_accountant = ManualPrivacyAccountant(moment_orders=None)
+    # Calculate sampling rate
     dataset_size = len(train_dataset)
     batch_size = config['batch_size']
     sampling_rate = batch_size / dataset_size
+    
+    # Use the accountant factory instead of direct initialization
+    acc_cfg = config['dp_noise']
+    privacy_accountant = get_accountant(
+        acc_cfg.get('mode', 'adaptive'),
+        noise_multiplier=acc_cfg['initial_sigma'],
+        sampling_rate=sampling_rate,
+        moment_orders=None
+    )
     target_delta = float(config['dp_noise']['delta'])
-    print(f"Initialized Manual Privacy Accountant. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
+    print(f"Initialized Privacy Accountant in {acc_cfg.get('mode', 'adaptive')} mode. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
 
     start_time = time.time()
     num_rounds = config['num_rounds']
@@ -222,7 +232,9 @@ def main():
             "delta": target_delta,
             "sigma": current_sigma,
             "sigma_init": initial_sigma,
-            "rounds": num_rounds
+            "rounds": num_rounds,
+            "epsilon_history": privacy_accountant._eps_history,
+            "sigma_history": fed_server._sigma_history
         }
         metrics_file = out_dir / "metrics.json"
         with open(metrics_file, 'w') as f:
