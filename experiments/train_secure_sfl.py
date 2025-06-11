@@ -22,7 +22,7 @@ from src.datasets.data_loader import get_mnist_dataloaders, get_client_data_load
 from src.models import get_model # Import from models package
 from src.models.split_utils import split_model, get_combined_model
 from src.dp.privacy_accountant import ManualPrivacyAccountant
-from src.dp.registry import get_accountant
+from src.dp.registry import get_accountant, HybridAccountant
 from src.sfl.client import SFLClient
 from src.sfl.main_server import MainServer
 from src.sfl.fed_server import FedServer
@@ -118,13 +118,13 @@ def main():
     # Use the accountant factory instead of direct initialization
     acc_cfg = config['dp_noise']
     privacy_accountant = get_accountant(
-        acc_cfg.get('mode', 'adaptive'),
+        acc_cfg.get('mode', 'hybrid'),  # Default to hybrid accountant
         noise_multiplier=acc_cfg['initial_sigma'],
         sampling_rate=sampling_rate,
         moment_orders=None
     )
     target_delta = float(config['dp_noise']['delta'])
-    print(f"Initialized Privacy Accountant in {acc_cfg.get('mode', 'adaptive')} mode. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
+    print(f"Initialized Privacy Accountant in {acc_cfg.get('mode', 'hybrid')} mode. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
 
     start_time = time.time()
     num_rounds = config['num_rounds']
@@ -151,6 +151,10 @@ def main():
         for client in clients:
             noisy_activations, labels = client.local_forward_pass()
             client_data_for_main_server[client.client_id] = (noisy_activations, labels)
+            
+            # Track Laplace privacy cost if using HybridAccountant
+            if isinstance(privacy_accountant, HybridAccountant) and config['dp_noise']['laplacian_sensitivity'] > 0:
+                privacy_accountant.laplace_step(config['dp_noise']['epsilon_prime'])
 
         for client_id, (noisy_acts, lbls) in client_data_for_main_server.items():
             main_server.receive_client_data(client_id, noisy_acts, lbls)
@@ -167,11 +171,17 @@ def main():
                 noisy_wc_grad = client.local_backward_pass(activation_grad)
                 client_noisy_wc_grads.append(noisy_wc_grad)
                 if current_sigma > 0:
-                    privacy_accountant.step(
-                        noise_multiplier=current_sigma,
-                        sampling_rate=sampling_rate,
-                        num_steps=1
-                    )
+                    if isinstance(privacy_accountant, HybridAccountant):
+                        privacy_accountant.gaussian_step(
+                            noise_multiplier=current_sigma,
+                            num_steps=1
+                        )
+                    else:
+                        privacy_accountant.step(
+                            noise_multiplier=current_sigma,
+                            sampling_rate=sampling_rate,
+                            num_steps=1
+                        )
             else:
                 print(f"Warning: No activation gradient received for Client {client.client_id}")
 
@@ -226,16 +236,25 @@ def main():
     # Save metrics to JSON file
     if out_dir:
         initial_sigma = config['dp_noise'].get('initial_sigma', 0.0)
+        epsilon_prime = config['dp_noise'].get('epsilon_prime', 0.0)
+        
         metrics = {
             "final_test_acc": test_accuracy / 100.0 if test_accuracy is not None else None,  # Convert to decimal
             "epsilon": epsilon,
             "delta": target_delta,
             "sigma": current_sigma,
             "sigma_init": initial_sigma,
+            "epsilon_prime": epsilon_prime,
             "rounds": num_rounds,
             "epsilon_history": privacy_accountant._eps_history,
             "sigma_history": fed_server._sigma_history
         }
+        
+        # Add the separate epsilon values if using the hybrid accountant
+        if isinstance(privacy_accountant, HybridAccountant):
+            metrics["epsilon_laplace"] = privacy_accountant.epsilon_laplace
+            metrics["epsilon_gaussian"] = privacy_accountant.epsilon_gaussian
+            
         metrics_file = out_dir / "metrics.json"
         with open(metrics_file, 'w') as f:
             json.dump(metrics, f, indent=2)

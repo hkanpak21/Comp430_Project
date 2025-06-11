@@ -8,7 +8,7 @@ sys.path.insert(0, project_root)
 
 from src.dp.registry import get_accountant
 
-@pytest.mark.parametrize("mode", ["vanilla", "adaptive"])
+@pytest.mark.parametrize("mode", ["vanilla", "adaptive", "hybrid"])
 def test_budget_progression(mode):
     acc = get_accountant(mode,
                          noise_multiplier=1.2,
@@ -16,6 +16,10 @@ def test_budget_progression(mode):
     
     if mode == "vanilla":
         acc.step(num_steps=100)
+    elif mode == "hybrid":
+        # For hybrid, we test both Laplace and Gaussian steps
+        acc.laplace_step(epsilon_prime=0.1)
+        acc.gaussian_step(num_steps=100)
     else:
         acc.step(noise_multiplier=1.2, num_steps=100)
         
@@ -45,6 +49,35 @@ def test_accountant_types(mode):
         acc.step(noise_multiplier=1.0, num_steps=5)
         acc.step(noise_multiplier=0.8, num_steps=5)
         assert len(acc._eps_history) == 2
+
+def test_hybrid_accountant():
+    """Test specific functionality of the hybrid accountant."""
+    acc = get_accountant("hybrid",
+                         noise_multiplier=1.0,
+                         sampling_rate=0.01)
+    
+    # Clear any existing history
+    acc._eps_history = []
+    
+    # Test Laplace steps
+    acc.laplace_step(epsilon_prime=0.1)
+    assert acc.epsilon_laplace == 0.1
+    
+    # Test Gaussian steps
+    acc.gaussian_step(num_steps=10)
+    assert acc.total_steps == 10
+    
+    # Test combined privacy calculation
+    eps, delta = acc.get_privacy_spent(delta=1e-5)
+    assert eps > 0.1  # Should be greater than just the Laplace component
+    assert delta == 1e-5
+    
+    # Check that epsilon_gaussian property works
+    assert acc.epsilon_gaussian > 0
+    assert abs(eps - (acc.epsilon_laplace + acc.epsilon_gaussian)) < 1e-10
+    
+    # Test history tracking
+    assert len(acc._eps_history) == 2  # One entry per step
 
 def test_invalid_accountant_mode():
     with pytest.raises(ValueError):
