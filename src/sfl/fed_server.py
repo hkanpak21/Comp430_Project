@@ -31,6 +31,7 @@ class FedServer:
         self._noise_decay_patience = config['dp_noise']['noise_decay_patience']
         self._adaptive_noise_decay_factor = config['dp_noise']['adaptive_noise_decay_factor']
         self._criterion = nn.CrossEntropyLoss()
+        self._sigma_history = [self._current_sigma]  # Track sigma history
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Creates the optimizer for the global client-side model (WC)."""
@@ -164,6 +165,8 @@ class FedServer:
             self._current_sigma *= self._adaptive_noise_decay_factor
             print(f"FedServer: Loss decreasing for {self._noise_decay_patience} rounds. "
                   f"Updated noise scale to {self._current_sigma:.4f}")
+            # Track sigma change
+            self._sigma_history.append(self._current_sigma)
 
     def get_current_sigma(self) -> float:
         """Returns the current noise scale sigma_t."""
