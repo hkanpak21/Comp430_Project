@@ -23,17 +23,17 @@ dirichlet_alpha: 0.5  # moderate non-IID
 dp_noise:
   # Activation noise parameters
   activation_clip_norm: 1.0
-  activation_noise_multiplier: 0.5
+  activation_noise_multiplier: 0.1  # Lower noise for activations to match adaptive config
   
   # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.5
+  initial_sigma: 0.1  # Lower noise for gradients to match adaptive config
   
-  # Mode and other parameters
+  # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.0  # Disable adaptive clipping
-  adaptive_noise_decay_factor: 1.0  # Disable adaptive noise decay
+  adaptive_clipping_factor: 0.0  # Disable adaptive clipping for vanilla DP
+  adaptive_noise_decay_factor: 1.0  # Disable adaptive noise decay for vanilla DP
   noise_decay_patience: 0
   validation_set_ratio: 0.1
 

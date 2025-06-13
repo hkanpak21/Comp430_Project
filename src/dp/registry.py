@@ -11,9 +11,14 @@ class VanillaGaussianAccountant(ManualPrivacyAccountant):
         self.q = sampling_rate
         self._eps_history = []  # Track epsilon history
 
-    def step(self, num_steps: int = 1):
+    def step(self, activation_noise_multiplier=0.0, gradient_noise_multiplier=None, sampling_rate=None, num_steps=1):
+        # Ignore activation_noise_multiplier as vanilla accountant only tracks gradient noise
+        # Use provided gradient_noise_multiplier or default to the fixed sigma
+        sigma = gradient_noise_multiplier if gradient_noise_multiplier is not None else self.fixed_sigma
+        q = sampling_rate if sampling_rate is not None else self.q
+        
         # Call super().step to update the RDP values
-        super().step(self.fixed_sigma, self.q, num_steps)
+        super().step(sigma, q, num_steps)
         
         # Track epsilon after step
         eps, _ = self.get_privacy_spent(delta=1e-5)  # Using a default delta for tracking

@@ -40,4 +40,18 @@ class BCWDNN(nn.Module):
         
         # Output layer
         x = self.fc3(x)
-        return x 
+        return x
+        
+    def get_layers(self):
+        """Return a list of layers in the model for splitting purposes."""
+        return [
+            self.fc1,
+            self.bn1,
+            nn.ReLU(),
+            self.dropout1,
+            self.fc2,
+            self.bn2,
+            nn.ReLU(),
+            self.dropout2,
+            self.fc3
+        ] 

@@ -1,4 +1,4 @@
-# MNIST with 5 clients and adaptive DP
+# MNIST with 5 clients and vanilla DP (extreme non-IID setting)
 seed: 42
 dataset: "mnist"
 model: "SimpleCNN"
@@ -15,11 +15,11 @@ optimizer: "Adam"
 cut_layer: 3
 min_acc: 0.1
 
-# Data distribution
+# Data distribution - extreme non-IID
 partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+dirichlet_alpha: 0.1  # extreme non-IID (very concentrated data)
 
-# Differential Privacy Parameters (Adaptive noise parameters)
+# Differential Privacy Parameters (Fixed noise parameters)
 dp_noise:
   # Activation noise parameters
   activation_clip_norm: 1.0
@@ -27,14 +27,14 @@ dp_noise:
   
   # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.1  # Lower initial noise
+  initial_sigma: 0.1  # Lower noise for gradients
   
   # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.9  # Enable adaptive clipping
-  adaptive_noise_decay_factor: 0.9  # More aggressive decay (was 0.95)
-  noise_decay_patience: 2  # Reduced patience for faster adaptation
+  adaptive_clipping_factor: 0.0  # Disable adaptive clipping for vanilla DP
+  adaptive_noise_decay_factor: 1.0  # Disable adaptive noise decay for vanilla DP
+  noise_decay_patience: 0
   validation_set_ratio: 0.1
 
 # Logging

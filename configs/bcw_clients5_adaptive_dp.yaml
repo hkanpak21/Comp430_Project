@@ -23,18 +23,18 @@ dirichlet_alpha: 0.5  # moderate non-IID
 dp_noise:
   # Activation noise parameters
   activation_clip_norm: 1.0
-  activation_noise_multiplier: 0.5
+  activation_noise_multiplier: 0.05  # Lower noise for activations
   
   # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.5
+  initial_sigma: 0.05  # Lower initial noise
   
   # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
   adaptive_clipping_factor: 0.9  # Enable adaptive clipping
-  adaptive_noise_decay_factor: 0.95  # Enable adaptive noise decay
-  noise_decay_patience: 3
+  adaptive_noise_decay_factor: 0.9  # More aggressive adaptation
+  noise_decay_patience: 2  # Reduced patience
   validation_set_ratio: 0.1
 
 # Logging

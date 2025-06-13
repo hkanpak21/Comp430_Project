@@ -30,7 +30,7 @@ dp_noise:
   initial_sigma: 0.0
   
   # Mode and other parameters
-  mode: "vanilla"
+  mode: "unified"
   delta: 1e-5
   adaptive_clipping_factor: 0.0
   adaptive_noise_decay_factor: 1.0
