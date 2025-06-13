@@ -10,30 +10,31 @@ batch_size: 64
 num_rounds: 20
 
 # Model & Training
-lr: 0.001
+lr: 0.005
 optimizer: "Adam"
 cut_layer: 3
 min_acc: 0.1
 
 # Data distribution
-partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+partition_method: "iid"
+# partition_method: "dirichlet"
+# dirichlet_alpha: 0.5  # Commented out as it's not needed for IID
 
 # Differential Privacy Parameters (Fixed noise parameters)
 dp_noise:
   # Activation noise parameters
   activation_clip_norm: 1.0
-  activation_noise_multiplier: 0.1  # Lower noise for activations to match adaptive config
+  activation_noise_multiplier: 0.01
   
   # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.1  # Lower noise for gradients to match adaptive config
+  initial_sigma: 0.01
   
   # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.0  # Disable adaptive clipping for vanilla DP
-  adaptive_noise_decay_factor: 1.0  # Disable adaptive noise decay for vanilla DP
+  adaptive_clipping_factor: 0.0
+  adaptive_noise_decay_factor: 1.0
   noise_decay_patience: 0
   validation_set_ratio: 0.1
 
