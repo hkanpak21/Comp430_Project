@@ -1,4 +1,4 @@
-# MNIST comparing FL (cut at last layer) vs SFL with adaptive DP
+# MNIST FL simulation with adaptive DP for comparison with SFL
 seed: 42
 dataset: "mnist"
 model: "SimpleCNN"
@@ -10,31 +10,32 @@ batch_size: 64
 num_rounds: 20
 
 # Model & Training
-lr: 0.001
+lr: 0.005
 optimizer: "Adam"
-cut_layer: 6  # Cut at the last layer (FL simulation)
+cut_layer: 9  # Cut at last layer to simulate FL (server only has final classification layer)
 min_acc: 0.1
 
 # Data distribution
-partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+partition_method: "iid"
 
-# Differential Privacy Parameters (with adaptive parameters)
+# Differential Privacy Parameters (Adaptive noise parameters)
 dp_noise:
-  # Only gradient noise for FL (no activation noise needed)
-  activation_clip_norm: 0.0
-  activation_noise_multiplier: 0.0
+  # Activation noise parameters
+  activation_clip_norm: 1.0
+  activation_noise_multiplier: 0.01
   
-  # Lower noise for gradients
+  # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.1
+  initial_sigma: 0.01
   
   # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.9  # Enable adaptive clipping
-  adaptive_noise_decay_factor: 0.9  # Enable adaptive noise decay
-  noise_decay_patience: 2
+  
+  # Enable adaptive mechanisms
+  adaptive_clipping_factor: 1.5  # Factor to adjust clipping threshold based on gradient norms
+  adaptive_noise_decay_factor: 0.9  # Factor to reduce noise when validation loss decreases consistently
+  noise_decay_patience: 2  # Number of consecutive loss decreases before reducing noise
   validation_set_ratio: 0.1
 
 # Logging

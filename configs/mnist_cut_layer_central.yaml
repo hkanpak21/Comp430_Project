@@ -1,4 +1,4 @@
-# MNIST with cut layer at the beginning (Centralized training)
+# MNIST simulating Centralized Learning (cut at first layer)
 seed: 42
 dataset: "mnist"
 model: "SimpleCNN"
@@ -10,30 +10,29 @@ batch_size: 64
 num_rounds: 20
 
 # Model & Training
-lr: 0.001
+lr: 0.005
 optimizer: "Adam"
-cut_layer: 0  # First layer (client model will be empty)
+cut_layer: 0  # Cut at the first layer to simulate centralized learning (minimal client-side computation)
 min_acc: 0.1
 
 # Data distribution
-partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+partition_method: "iid"
 
 # Differential Privacy Parameters
 dp_noise:
-  # Activation noise parameters (meaningless in centralized mode)
-  activation_clip_norm: 0.0
-  activation_noise_multiplier: 0.0
+  # Activation noise parameters
+  activation_clip_norm: 1.0
+  activation_noise_multiplier: 0.01
   
-  # Gradient noise parameters (meaningless in centralized mode)
-  clip_norm: 0.0
-  initial_sigma: 0.0
+  # Gradient noise parameters
+  clip_norm: 1.0
+  initial_sigma: 0.01
   
-  # Mode and other parameters
+  # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.0
-  adaptive_noise_decay_factor: 1.0
+  adaptive_clipping_factor: 0.0  # Vanilla DP
+  adaptive_noise_decay_factor: 1.0  # No adaptive decay
   noise_decay_patience: 0
   validation_set_ratio: 0.1
 

@@ -1,4 +1,4 @@
-# MNIST for SFL (cut at middle layer) with vanilla DP for comparison with FL
+# MNIST SFL for comparison with FL simulation (vanilla DP)
 seed: 42
 dataset: "mnist"
 model: "SimpleCNN"
@@ -10,30 +10,29 @@ batch_size: 64
 num_rounds: 20
 
 # Model & Training
-lr: 0.001
+lr: 0.005
 optimizer: "Adam"
-cut_layer: 3  # Cut in the middle (regular SFL)
+cut_layer: 3  # Standard SFL cut layer (for comparing with FL)
 min_acc: 0.1
 
 # Data distribution
-partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+partition_method: "iid"
 
-# Differential Privacy Parameters (matching the FL comparison config)
+# Differential Privacy Parameters
 dp_noise:
-  # Both activation and gradient noise for SFL
+  # Activation noise parameters
   activation_clip_norm: 1.0
-  activation_noise_multiplier: 0.1
+  activation_noise_multiplier: 0.01
   
-  # Lower noise for gradients
+  # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.1
+  initial_sigma: 0.01
   
   # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.0  # Disable adaptive clipping
-  adaptive_noise_decay_factor: 1.0  # Disable adaptive noise decay
+  adaptive_clipping_factor: 0.0  # Vanilla DP
+  adaptive_noise_decay_factor: 1.0  # No adaptive decay
   noise_decay_patience: 0
   validation_set_ratio: 0.1
 

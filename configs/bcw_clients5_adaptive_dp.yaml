@@ -1,41 +1,44 @@
-# Breast Cancer Wisconsin with 5 clients and adaptive DP
+# Breast Cancer Wisconsin (BCW) with 5 clients and adaptive DP
 seed: 42
 dataset: "bcw"
-model: "BCWDNN"  # Will need to be defined in model registry
+model: "BCWDNN"
 data_dir: "./data"
 
 # SFL Setup
 num_clients: 5
-batch_size: 16  # Smaller batch size for this small dataset
+batch_size: 32  # Smaller batch size for BCW dataset
 num_rounds: 20
 
 # Model & Training
-lr: 0.001
+lr: 0.005
 optimizer: "Adam"
-cut_layer: 1  # Middle layer cut for the DNN model
-min_acc: 0.1
+cut_layer: 1  # Appropriate cut layer for the BCW model
+min_acc: 0.5  # Higher minimum accuracy baseline for BCW
 
 # Data distribution
-partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+partition_method: "iid"
+# partition_method: "dirichlet"
+#dirichlet_alpha: 0.5  # Commented out as it's not needed for IID
 
 # Differential Privacy Parameters (Adaptive noise parameters)
 dp_noise:
   # Activation noise parameters
   activation_clip_norm: 1.0
-  activation_noise_multiplier: 0.05  # Lower noise for activations
+  activation_noise_multiplier: 0.01
   
   # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.05  # Lower initial noise
+  initial_sigma: 0.01
   
   # Mode and adaptive parameters
   mode: "unified"
   delta: 1e-5
-  adaptive_clipping_factor: 0.9  # Enable adaptive clipping
-  adaptive_noise_decay_factor: 0.9  # More aggressive adaptation
-  noise_decay_patience: 2  # Reduced patience
+  
+  # Enable adaptive mechanisms
+  adaptive_clipping_factor: 1.5  # Factor to adjust clipping threshold based on gradient norms
+  adaptive_noise_decay_factor: 0.9  # Factor to reduce noise when validation loss decreases consistently
+  noise_decay_patience: 2  # Number of consecutive loss decreases before reducing noise
   validation_set_ratio: 0.1
 
 # Logging
-log_interval: 2 
+log_interval: 5 
