@@ -39,6 +39,10 @@ class SFLClient:
         self._prev_round_grad_norms = None
         self._current_clip_threshold = config['dp_noise']['clip_norm'] # Initial threshold
         self._current_sigma = config['dp_noise']['initial_sigma'] # Initial noise scale
+        
+        # Activation clipping and noise parameters
+        self._activation_clip_norm = config['dp_noise'].get('activation_clip_norm', 1.0)
+        self._activation_noise_multiplier = config['dp_noise'].get('activation_noise_multiplier', 1.0)
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Creates the optimizer for the client-side model (WC)."""
@@ -79,7 +83,7 @@ class SFLClient:
     def local_forward_pass(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Performs the forward pass on the client model (WC) using one batch of local data.
-        Applies Laplacian noise to the activations before returning.
+        Clips activations and applies Gaussian noise before returning.
         """
         try:
             data, labels = next(iter(self.dataloader))
@@ -95,15 +99,23 @@ class SFLClient:
         self.optimizer.zero_grad()
         activations = self.client_model(data)
 
-        # Laplacian Noise (Mechanism 1)
-        sensitivity = self.config['dp_noise']['laplacian_sensitivity']
-        epsilon_prime = self.config['dp_noise']['epsilon_prime']
+        # First clip the activations before adding noise (Unified Gaussian approach)
+        if self._activation_clip_norm > 0:
+            # Clip each activation row (per sample) individually
+            clipped_activations = torch.zeros_like(activations)
+            for i in range(activations.shape[0]):
+                clipped_activations[i] = noise_utils.clip_tensor(
+                    activations[i], 
+                    self._activation_clip_norm
+                )
+            activations = clipped_activations
 
-        if sensitivity > 0:
-            noisy_activations = noise_utils.add_laplacian_noise(
+        # Apply Gaussian noise to clipped activations
+        if self._activation_noise_multiplier > 0:
+            noisy_activations = noise_utils.add_gaussian_noise(
                 activations,
-                sensitivity,
-                epsilon_prime,
+                self._activation_clip_norm,
+                self._activation_noise_multiplier,
                 device=self.device
             )
         else:

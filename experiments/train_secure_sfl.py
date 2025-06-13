@@ -18,11 +18,11 @@ from collections import OrderedDict
 
 # Imports for flattened structure
 from src.utils.config_parser import get_config_from_file as get_config
-from src.datasets.data_loader import get_mnist_dataloaders, get_client_data_loaders
+from src.datasets.data_loader import get_dataloaders, get_client_data_loaders
 from src.models import get_model # Import from models package
 from src.models.split_utils import split_model, get_combined_model
 from src.dp.privacy_accountant import ManualPrivacyAccountant
-from src.dp.registry import get_accountant, HybridAccountant
+from src.dp.registry import get_accountant
 from src.sfl.client import SFLClient
 from src.sfl.main_server import MainServer
 from src.sfl.fed_server import FedServer
@@ -73,7 +73,7 @@ def main():
     set_seed(config['seed'])
 
     # Get train, validation, and test loaders
-    train_loader, test_loader, train_dataset, _ = get_mnist_dataloaders(config)
+    train_loader, test_loader, train_dataset, test_dataset = get_dataloaders(config)
     
     # Split training data into client data and validation set
     validation_ratio = config['dp_noise']['validation_set_ratio']
@@ -118,13 +118,23 @@ def main():
     # Use the accountant factory instead of direct initialization
     acc_cfg = config['dp_noise']
     privacy_accountant = get_accountant(
-        acc_cfg.get('mode', 'hybrid'),  # Default to hybrid accountant
+        acc_cfg.get('mode', 'unified'),  # Default to unified accountant
         noise_multiplier=acc_cfg['initial_sigma'],
         sampling_rate=sampling_rate,
         moment_orders=None
     )
     target_delta = float(config['dp_noise']['delta'])
-    print(f"Initialized Privacy Accountant in {acc_cfg.get('mode', 'hybrid')} mode. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
+    print(f"Initialized Privacy Accountant in {acc_cfg.get('mode', 'unified')} mode. Sampling rate (q): {sampling_rate:.4f}, Target Delta: {target_delta}")
+
+    # Set up metrics tracking
+    history = {
+        "round": [],
+        "accuracy": [],
+        "privacy_epsilon": [],
+        "gradient_sigma": [],
+        "activation_sigma": [],
+        "time_per_round": []
+    }
 
     start_time = time.time()
     num_rounds = config['num_rounds']
@@ -151,10 +161,6 @@ def main():
         for client in clients:
             noisy_activations, labels = client.local_forward_pass()
             client_data_for_main_server[client.client_id] = (noisy_activations, labels)
-            
-            # Track Laplace privacy cost if using HybridAccountant
-            if isinstance(privacy_accountant, HybridAccountant) and config['dp_noise']['laplacian_sensitivity'] > 0:
-                privacy_accountant.laplace_step(config['dp_noise']['epsilon_prime'])
 
         for client_id, (noisy_acts, lbls) in client_data_for_main_server.items():
             main_server.receive_client_data(client_id, noisy_acts, lbls)
@@ -170,20 +176,17 @@ def main():
                 activation_grad = client_activation_grads[client.client_id]
                 noisy_wc_grad = client.local_backward_pass(activation_grad)
                 client_noisy_wc_grads.append(noisy_wc_grad)
-                if current_sigma > 0:
-                    if isinstance(privacy_accountant, HybridAccountant):
-                        privacy_accountant.gaussian_step(
-                            noise_multiplier=current_sigma,
-                            num_steps=1
-                        )
-                    else:
-                        privacy_accountant.step(
-                            noise_multiplier=current_sigma,
-                            sampling_rate=sampling_rate,
-                            num_steps=1
-                        )
             else:
                 print(f"Warning: No activation gradient received for Client {client.client_id}")
+
+        # Track privacy loss for this round (for both activation and gradient noise)
+        activation_noise_multiplier = config['dp_noise'].get('activation_noise_multiplier', 0.0)
+        privacy_accountant.step(
+            activation_noise_multiplier=activation_noise_multiplier,
+            gradient_noise_multiplier=current_sigma,
+            sampling_rate=sampling_rate,
+            num_steps=1
+        )
 
         for noisy_grad in client_noisy_wc_grads:
             fed_server.receive_client_update(noisy_grad)
@@ -192,15 +195,42 @@ def main():
         fed_server.aggregate_updates(validation_loader, main_server=main_server)
         
         round_end_time = time.time()
-        print(f"--- Round {round_num + 1} finished in {round_end_time - round_start_time:.2f} seconds ---")
+        round_time = round_end_time - round_start_time
+        print(f"--- Round {round_num + 1} finished in {round_time:.2f} seconds ---")
 
+        # Update history with round metrics
+        epsilon, _ = privacy_accountant.get_privacy_spent(delta=target_delta)
+        
+        # Evaluate model every log_interval rounds to avoid overhead
         if (round_num + 1) % config.get('log_interval', 10) == 0:
-            if current_sigma > 0:
-                epsilon, _ = privacy_accountant.get_privacy_spent(delta=target_delta)
-                print(f"Round {round_num + 1}: Current Privacy Budget (ε, δ={target_delta}): ({epsilon:.4f}, {target_delta})")
-                print(f"Round {round_num + 1}: Current Noise Scale (σ): {current_sigma:.4f}")
-            else:
-                print(f"Round {round_num + 1}: Noise disabled, privacy budget not tracked.")
+            # Create a combined model for evaluation
+            try:
+                eval_model = get_model(config['model']).to(device)
+                eval_model_client, eval_model_server = split_model(eval_model, config['cut_layer'])
+                eval_model_client.load_state_dict(fed_server.get_client_model_params())
+                eval_model_server.load_state_dict(main_server.get_server_model().state_dict())
+                
+                # Evaluate the combined model
+                test_accuracy = evaluate_model(eval_model, test_loader, device)
+                print(f"Round {round_num + 1}: Test Accuracy: {test_accuracy:.2f}%")
+            except Exception as e:
+                print(f"Error during evaluation: {e}")
+                test_accuracy = None
+            
+            print(f"Round {round_num + 1}: Current Privacy Budget (ε, δ={target_delta}): ({epsilon:.4f}, {target_delta})")
+            print(f"Round {round_num + 1}: Gradient Noise Scale (σ): {current_sigma:.4f}")
+            print(f"Round {round_num + 1}: Activation Noise Scale (σ): {activation_noise_multiplier:.4f}")
+        else:
+            # Skip evaluation on non-log rounds
+            test_accuracy = None
+        
+        # Record history for every round
+        history["round"].append(round_num + 1)
+        history["accuracy"].append(test_accuracy/100.0 if test_accuracy is not None else None)
+        history["privacy_epsilon"].append(epsilon)
+        history["gradient_sigma"].append(current_sigma)
+        history["activation_sigma"].append(activation_noise_multiplier)
+        history["time_per_round"].append(round_time)
 
     total_time = time.time() - start_time
     print(f"\nSFL Training finished in {total_time:.2f} seconds.")
@@ -225,39 +255,39 @@ def main():
     else:
         test_accuracy = None
 
-    epsilon = None
-    if current_sigma > 0:
-        epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
-        print(f"Final Privacy Budget (ε, δ) for Mechanism 2 (Gaussian): ({epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
-        print(f"Final Noise Scale (σ): {current_sigma:.4f}")
-    else:
-        print("Final Privacy Budget: Noise disabled for Mechanism 2.")
+    # Get final privacy epsilon
+    epsilon, final_delta = privacy_accountant.get_privacy_spent(delta=target_delta)
+    print(f"Final Privacy Budget (ε, δ) for Unified Mechanism: ({epsilon:.4f}, {final_delta}) after {privacy_accountant.total_steps} steps.")
+    print(f"Final Gradient Noise Scale (σ): {current_sigma:.4f}")
+    print(f"Final Activation Noise Scale (σ): {activation_noise_multiplier:.4f}")
         
-    # Save metrics to JSON file
+    # Save comprehensive metrics to JSON file
     if out_dir:
         initial_sigma = config['dp_noise'].get('initial_sigma', 0.0)
-        epsilon_prime = config['dp_noise'].get('epsilon_prime', 0.0)
+        activation_noise_multiplier = config['dp_noise'].get('activation_noise_multiplier', 0.0)
         
         metrics = {
             "final_test_acc": test_accuracy / 100.0 if test_accuracy is not None else None,  # Convert to decimal
-            "epsilon": epsilon,
-            "delta": target_delta,
-            "sigma": current_sigma,
-            "sigma_init": initial_sigma,
-            "epsilon_prime": epsilon_prime,
-            "rounds": num_rounds,
-            "epsilon_history": privacy_accountant._eps_history,
-            "sigma_history": fed_server._sigma_history
+            "total_elapsed_time": total_time,
+            "config": config,  # Include the full config for reference
+            "history": history,
+            "privacy": {
+                "final_epsilon": epsilon,
+                "delta": target_delta,
+                "total_steps": privacy_accountant.total_steps
+            },
+            "noise_parameters": {
+                "initial_gradient_sigma": initial_sigma,
+                "final_gradient_sigma": current_sigma,
+                "activation_noise_multiplier": activation_noise_multiplier,
+                "activation_clip_norm": config['dp_noise'].get('activation_clip_norm', 0.0)
+            }
         }
         
-        # Add the separate epsilon values if using the hybrid accountant
-        if isinstance(privacy_accountant, HybridAccountant):
-            metrics["epsilon_laplace"] = privacy_accountant.epsilon_laplace
-            metrics["epsilon_gaussian"] = privacy_accountant.epsilon_gaussian
-            
         metrics_file = out_dir / "metrics.json"
         with open(metrics_file, 'w') as f:
             json.dump(metrics, f, indent=2)
+        print(f"Metrics saved to {metrics_file}")
 
 if __name__ == "__main__":
     main() 

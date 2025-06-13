@@ -1,0 +1,41 @@
+# MNIST with cut layer at the end (Federated Learning)
+seed: 42
+dataset: "mnist"
+model: "SimpleCNN"
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 5
+batch_size: 64
+num_rounds: 20
+
+# Model & Training
+lr: 0.001
+optimizer: "Adam"
+cut_layer: 6  # Last layer (server model will be empty)
+min_acc: 0.1
+
+# Data distribution
+partition_method: "dirichlet"
+dirichlet_alpha: 0.5  # moderate non-IID
+
+# Differential Privacy Parameters
+dp_noise:
+  # Activation noise parameters (not used in FL mode)
+  activation_clip_norm: 0.0
+  activation_noise_multiplier: 0.0
+  
+  # Gradient noise parameters
+  clip_norm: 1.0
+  initial_sigma: 0.5
+  
+  # Mode and other parameters
+  mode: "unified"
+  delta: 1e-5
+  adaptive_clipping_factor: 0.0
+  adaptive_noise_decay_factor: 1.0
+  noise_decay_patience: 0
+  validation_set_ratio: 0.1
+
+# Logging
+log_interval: 5 

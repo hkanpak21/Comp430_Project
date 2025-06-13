@@ -2,20 +2,21 @@
 
 ## Overview
 
-This project implements a simulation framework for Secure Split Federated Learning (SFLV1), as described by Thapa et al. (2022). It features manually implemented privacy-enhancing techniques (Laplacian noise on activations, Gaussian noise on gradients with per-sample clipping) and a manual Moments Accountant for privacy tracking. The framework supports both fixed and adaptive differential privacy (inspired by Fu et al., 2022) without external DP libraries.
+This project implements a simulation framework for Secure Split Federated Learning (SFLV1), as described by Thapa et al. (2022). It features a unified Gaussian differential privacy mechanism for both activations and gradients, and a comprehensive experimental suite for evaluating various configurations.
 
 ## Key Features
 
 *   **SFLV1 Simulation:** Client, Main Server, and Fed Server components.
-*   **Manual DP Mechanisms:**
-    *   Laplacian noise for activations.
-    *   Gaussian noise with per-sample gradient clipping for gradients.
+*   **Unified Gaussian DP Mechanism:**
+    *   Gaussian noise for both activations and gradients with appropriate clipping.
+    *   Unified privacy accounting via Rényi Differential Privacy.
 *   **Adaptive Differential Privacy:** Adjusts clipping and noise based on model convergence.
-*   **Manual Moments Accountant:** Tracks (ε, δ)-DP budget.
+*   **Multiple Datasets:** MNIST and Breast Cancer Wisconsin (BCW).
+*   **Experimental Suite:** Varied client counts, split strategies, and privacy mechanisms.
 *   **Model Splitting:** Supports splitting PyTorch models at specified layers.
 *   **Federated Averaging:** For model aggregation.
 *   **Configurable:** Uses YAML files for experiment parameters.
-*   **Evaluation:** Reports test accuracy and privacy budget.
+*   **Detailed Logging:** Comprehensive per-round metrics in JSON format.
 
 ## Repository Structure
 
@@ -30,7 +31,6 @@ Comp430_Project/
 │   ├── models/            # Model definitions, splitting logic
 │   ├── sfl/               # SFL components (client, servers)
 │   └── utils/             # Utility functions
-├── Papers/                # Reference papers (archived, in .gitignore)
 └── requirements.txt       # Python dependencies
 ```
 
@@ -53,35 +53,50 @@ Comp430_Project/
 
 ## Configuration
 
-Experiments are configured using YAML files in the `configs/` directory (e.g., `default.yaml`, `fixed_dp.yaml`, `adaptive_dp.yaml`). Key parameters include:
+Experiments are configured using YAML files in the `configs/` directory. The framework now includes the following configuration types:
 
-*   **Basic:** Dataset, model, client/round numbers, learning rate, optimizer, cut layer.
-*   **Fixed DP:** Laplacian sensitivity/epsilon, gradient clip norm, noise multiplier, delta.
-*   **Adaptive DP:** Clipping factor, initial sigma, noise decay parameters, validation ratio.
-
-Refer to the example configuration files in `configs/` for detailed parameter lists and descriptions.
+1. **Client Scaling:** 3, 5, 10, and 20 clients (`mnist_clients{n}_vanilla_dp.yaml`)
+2. **Split Variations:** 
+   - Federated Learning (`mnist_cut_layer_fl.yaml`)
+   - Centralized Learning (`mnist_cut_layer_central.yaml`)
+   - Split learning with various cut layers
+3. **DP Mechanisms:**
+   - Vanilla DP (fixed privacy parameters)
+   - Adaptive DP (adjusts noise based on validation loss)
+4. **Datasets:**
+   - MNIST (`mnist_*.yaml`)
+   - Breast Cancer Wisconsin (`bcw_*.yaml`)
 
 ## Running Experiments
 
 Execute experiments from the repository root:
 
 ```bash
-# Default configuration
-python experiments/train_secure_sfl.py --config configs/default.yaml
+# MNIST with 5 clients and vanilla DP
+python experiments/train_secure_sfl.py --config configs/mnist_clients5_vanilla_dp.yaml --run_id mnist_clients5_vanilla
 
-# Fixed differential privacy
-python experiments/train_secure_sfl.py --config configs/fixed_dp.yaml
+# MNIST with 5 clients and adaptive DP
+python experiments/train_secure_sfl.py --config configs/mnist_clients5_adaptive_dp.yaml --run_id mnist_clients5_adaptive
 
-# Adaptive differential privacy
-python experiments/train_secure_sfl.py --config configs/adaptive_dp.yaml
+# Breast Cancer Wisconsin with 5 clients
+python experiments/train_secure_sfl.py --config configs/bcw_clients5_vanilla_dp.yaml --run_id bcw_clients5_vanilla
 
-# Example with a specific model and adaptive DP
-python experiments/train_secure_sfl.py --config configs/cnn_adaptive_dp.yaml
+# Federated Learning simulation (cut at last layer)
+python experiments/train_secure_sfl.py --config configs/mnist_cut_layer_fl.yaml --run_id mnist_fl_sim
 ```
+
+The `--run_id` parameter specifies an output directory for metrics under `experiments/out/`.
 
 ## Output
 
-The script logs training progress, privacy budget (ε, δ) evolution (including noise scale σ for adaptive DP), final test accuracy, and the final privacy budget.
+The framework generates detailed metrics in JSON format, including:
+- Final test accuracy
+- Total training time
+- Per-round metrics (accuracy, privacy budget, noise scales, etc.)
+- Privacy parameters
+- Full configuration
+
+The metrics are stored in `experiments/out/{run_id}/metrics.json`.
 
 ## References
 
