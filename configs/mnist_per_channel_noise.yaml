@@ -10,14 +10,13 @@ batch_size: 64
 num_rounds: 20
 
 # Model & Training
-lr: 0.001
+lr: 0.005
 optimizer: "Adam"
 cut_layer: 3
 min_acc: 0.1
 
 # Data distribution
-partition_method: "dirichlet"
-dirichlet_alpha: 0.5  # moderate non-IID
+partition_method: "iid"
 
 # Differential Privacy Parameters
 dp_noise:
