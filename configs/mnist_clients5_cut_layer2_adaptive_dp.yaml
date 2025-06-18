@@ -1,0 +1,24 @@
+seed: 42
+dataset: mnist
+model: SimpleCNN
+data_dir: ./data
+num_clients: 5
+batch_size: 64
+num_rounds: 50
+lr: 0.005
+optimizer: Adam
+cut_layer: 2
+min_acc: 0.1
+partition_method: iid
+dp_noise:
+  activation_clip_norm: 1.0
+  activation_noise_multiplier: 1.0
+  clip_norm: 1.0
+  initial_sigma: 1.0
+  mode: unified
+  delta: 1e-5
+  adaptive_clipping_factor: 0.5
+  adaptive_noise_decay_factor: 0.9
+  noise_decay_patience: 3
+  validation_set_ratio: 0.1
+log_interval: 5 
