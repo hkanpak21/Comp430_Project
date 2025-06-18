@@ -1,0 +1,4 @@
+Model,Final Accuracy (%),Privacy Budget (ε),Config File
+No DP Noise,90.6,0.1827,mnist_clients5_no_noise.yaml
+Adaptive DP (0.9 decay),88.08,13853858.4420,mnist_clients5_adaptive_dp_09.yaml
+Fixed DP Noise,85.28,998663.9417,mnist_clients5_fixed_noise.yaml
