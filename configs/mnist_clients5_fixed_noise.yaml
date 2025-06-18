@@ -1,0 +1,40 @@
+# MNIST with 5 clients and fixed DP noise
+seed: 42
+dataset: "mnist"
+model: "SimpleCNN"
+data_dir: "./data"
+
+# SFL Setup
+num_clients: 5
+batch_size: 64
+num_rounds: 50  # Increased to 50 rounds for better comparison
+
+# Model & Training
+lr: 0.005
+optimizer: "Adam"
+cut_layer: 3
+min_acc: 0.1
+
+# Data distribution
+partition_method: "iid"
+
+# Differential Privacy Parameters (Fixed noise parameters)
+dp_noise:
+  # Activation noise parameters
+  activation_clip_norm: 1.0
+  activation_noise_multiplier: 0.01
+  
+  # Gradient noise parameters
+  clip_norm: 1.0
+  initial_sigma: 0.01
+  
+  # Mode and adaptive parameters
+  mode: "unified"
+  delta: 1e-5
+  adaptive_clipping_factor: 0.0  # Disable adaptive clipping for vanilla DP
+  adaptive_noise_decay_factor: 1.0  # Disable adaptive noise decay for vanilla DP
+  noise_decay_patience: 0
+  validation_set_ratio: 0.1
+
+# Logging
+log_interval: 5 

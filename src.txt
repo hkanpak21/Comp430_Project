@@ -1,0 +1,1861 @@
+import torch
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, random_split, Subset, Dataset
+import numpy as np
+import os
+import sys
+from .partition import partition_data_dirichlet
+
+class BCWDataset(Dataset):
+    """
+    PyTorch Dataset for the Breast Cancer Wisconsin dataset from sklearn.
+    """
+    def __init__(self, features, labels, transform=None):
+        self.features = torch.tensor(features, dtype=torch.float32)
+        self.labels = torch.tensor(labels, dtype=torch.long)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        x = self.features[idx]
+        y = self.labels[idx]
+        
+        if self.transform:
+            x = self.transform(x)
+            
+        return x, y
+
+def get_bcw_dataloaders(config):
+    """
+    Loads the Breast Cancer Wisconsin dataset from sklearn and creates DataLoaders.
+    """
+    try:
+        from sklearn.datasets import load_breast_cancer
+        from sklearn.model_selection import train_test_split
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        print("scikit-learn is not installed. Installing...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "scikit-learn"])
+        from sklearn.datasets import load_breast_cancer
+        from sklearn.model_selection import train_test_split
+        from sklearn.preprocessing import StandardScaler
+    
+    batch_size = config['batch_size']
+    
+    # Load the breast cancer dataset
+    data = load_breast_cancer()
+    X, y = data.data, data.target
+    
+    # Standardize features
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+    
+    # Split the data into training (80%) and test (20%) sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=config['seed'])
+    
+    # Create PyTorch datasets
+    train_dataset = BCWDataset(X_train, y_train)
+    test_dataset = BCWDataset(X_test, y_test)
+    
+    # Create dataloaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    
+    return train_loader, test_loader, train_dataset, test_dataset
+
+def get_mnist_dataloaders(config):
+    """Downloads MNIST, applies transformations, and creates DataLoaders for train and test sets."""
+    data_dir = config['data_dir']
+    batch_size = config['batch_size']
+
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,)) # MNIST specific normalization
+    ])
+
+    # Ensure data directory exists
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Download and load the training data
+    train_dataset = datasets.MNIST(root=data_dir,
+                                   train=True,
+                                   download=True,
+                                   transform=transform)
+
+    # Download and load the test data
+    test_dataset = datasets.MNIST(root=data_dir,
+                                  train=False,
+                                  download=True,
+                                  transform=transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    return train_loader, test_loader, train_dataset, test_dataset
+
+def partition_data_iid(dataset, num_clients):
+    """Partitions a dataset into IID subsets for each client."""
+    num_items_per_client = len(dataset) // num_clients
+    client_datasets = {}
+    all_indices = list(range(len(dataset)))
+    np.random.shuffle(all_indices) # Shuffle indices for random distribution
+
+    for i in range(num_clients):
+        start_idx = i * num_items_per_client
+        # Ensure the last client gets any remaining data points
+        end_idx = (i + 1) * num_items_per_client if i != num_clients - 1 else len(dataset)
+        client_indices = all_indices[start_idx:end_idx]
+        client_datasets[i] = Subset(dataset, client_indices)
+
+    return client_datasets
+
+def get_client_data_loaders(config, train_dataset):
+    """Partitions the training data and creates DataLoaders for each client."""
+    num_clients = config['num_clients']
+    batch_size = config['batch_size']
+    partition_method = config.get('partition_method', 'iid')
+    
+    if partition_method == 'dirichlet':
+        alpha = config.get('dirichlet_alpha', 1.0)
+        print(f"Using Dirichlet partition with alpha={alpha}")
+        client_datasets = partition_data_dirichlet(train_dataset, num_clients, alpha)
+    else:
+        # Default to IID partitioning
+        print("Using IID partition")
+        client_datasets = partition_data_iid(train_dataset, num_clients)
+    
+    client_loaders = {}
+    for client_id, dataset in client_datasets.items():
+        client_loaders[client_id] = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    return client_loaders
+
+def get_dataloaders(config):
+    """Returns train and test loaders based on the dataset specified in config."""
+    dataset_name = config.get('dataset', 'mnist').lower()
+    
+    if dataset_name == 'mnist':
+        return get_mnist_dataloaders(config)
+    elif dataset_name == 'bcw':
+        return get_bcw_dataloaders(config)
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}") import numpy as np
+import torch
+from torch.utils.data import Subset
+
+def partition_data_dirichlet(dataset, num_clients, alpha):
+    """
+    Partitions the data using a Dirichlet distribution to create non-IID data splits.
+    
+    Args:
+        dataset: The dataset to partition (can be a regular dataset or a Subset)
+        num_clients: Number of clients to create partitions for
+        alpha: Dirichlet concentration parameter - controls skew
+               alpha→0: extreme skew, each client gets mostly one class
+               alpha→∞: balanced distribution (IID)
+    
+    Returns:
+        A dictionary mapping client IDs to dataset subsets
+    """
+    # Extract targets based on dataset type
+    if hasattr(dataset, 'targets'):
+        # Regular dataset with targets attribute
+        targets = np.array(dataset.targets)
+    elif isinstance(dataset, Subset):
+        # Handle Subset case
+        if hasattr(dataset.dataset, 'targets'):
+            # If the underlying dataset has targets attribute
+            original_targets = dataset.dataset.targets
+            if isinstance(original_targets, torch.Tensor):
+                original_targets = original_targets.numpy()
+            elif not isinstance(original_targets, np.ndarray):
+                original_targets = np.array(original_targets)
+            
+            # Extract only the targets for the indices in the subset
+            targets = original_targets[dataset.indices]
+        else:
+            # If the dataset doesn't have a targets attribute, try to get targets from __getitem__
+            targets = []
+            for i in range(len(dataset)):
+                _, target = dataset[i]
+                targets.append(target)
+            targets = np.array(targets)
+    else:
+        # Last resort: try to extract targets by iterating through the dataset
+        targets = []
+        for i in range(len(dataset)):
+            _, target = dataset[i]
+            targets.append(target)
+        targets = np.array(targets)
+
+    classes = np.unique(targets)
+    idx_by_class = {c: np.where(targets == c)[0] for c in classes}
+
+    client_indices = [[] for _ in range(num_clients)]
+
+    for c in classes:
+        # draw class proportions
+        props = np.random.dirichlet(alpha * np.ones(num_clients))
+        props = (props * len(idx_by_class[c])).astype(int)
+        
+        # If there's rounding error, adjust last partition size
+        props[-1] = len(idx_by_class[c]) - props[:-1].sum()
+
+        # split indices
+        np.random.shuffle(idx_by_class[c])
+        start = 0
+        for cid, cnt in enumerate(props):
+            client_indices[cid].extend(idx_by_class[c][start:start+cnt])
+            start += cnt
+
+    # If working with a Subset, we need to remap the indices
+    if isinstance(dataset, Subset):
+        for cid in range(num_clients):
+            # Map back to the original dataset indices
+            client_indices[cid] = [dataset.indices[i] for i in client_indices[cid]]
+            client_dataset = Subset(dataset.dataset, client_indices[cid])
+            client_datasets = {cid: client_dataset for cid, idx in enumerate(client_indices)}
+    else:
+        client_datasets = {cid: Subset(dataset, idx) for cid, idx in enumerate(client_indices)}
+
+    return client_datasets  import torch
+
+def add_gaussian_noise(tensor, clip_norm, noise_multiplier, device='cpu'):
+    """
+    Adds Gaussian noise scaled by clip_norm and noise_multiplier.
+    Used for both activations and gradients in the unified DP approach.
+
+    Args:
+        tensor: The input tensor (e.g., clipped activations or summed clipped gradients).
+        clip_norm: The L2 norm bound C used for clipping.
+        noise_multiplier: The noise multiplier z (sigma = z * C).
+        device: The device to generate noise on ('cpu' or 'cuda').
+
+    Returns:
+        Tensor with added Gaussian noise.
+    """
+    if noise_multiplier < 0:
+        raise ValueError("Noise multiplier cannot be negative.")
+    if clip_norm <= 0:
+        # Allow clip_norm=0 for cases where no privacy is applied (noise_multiplier=0)
+        if noise_multiplier > 0:
+             raise ValueError("Clip norm must be positive if noise multiplier is positive.")
+        else:
+            # No clipping, no noise - return original tensor
+            return tensor
+
+    sigma = noise_multiplier * clip_norm
+
+    # If sigma is zero, no noise is added.
+    if sigma == 0.0:
+        return tensor
+
+    # Generate Gaussian noise N(0, sigma^2 * I)
+    gaussian_dist = torch.distributions.normal.Normal(loc=0.0, scale=sigma)
+    noise = gaussian_dist.sample(tensor.size()).to(device)
+
+    return tensor + noise
+
+def add_per_channel_gaussian_noise(tensor, clip_norm, noise_multiplier, device='cpu'):
+    """
+    Adds Gaussian noise on a per-channel basis for convolutional activations.
+    Instead of using a single noise scale for the entire activation tensor,
+    this scales noise independently for each channel based on its norm.
+    
+    Args:
+        tensor: The input tensor (activations) with shape [batch_size, channels, height, width]
+        clip_norm: The L2 norm bound C used for clipping (per channel)
+        noise_multiplier: The noise multiplier z (sigma = z * channel_norm)
+        device: The device to generate noise on ('cpu' or 'cuda')
+        
+    Returns:
+        Tensor with added per-channel Gaussian noise
+    """
+    if noise_multiplier <= 0:
+        return tensor
+        
+    # Create output tensor
+    result = torch.zeros_like(tensor)
+    
+    # Process each sample in the batch
+    for i in range(tensor.shape[0]):
+        # Process each channel separately
+        for c in range(tensor.shape[1]):
+            channel = tensor[i, c]
+            
+            # Calculate channel norm
+            channel_norm = torch.norm(channel, p=2)
+            
+            # If channel is all zeros, skip noise addition
+            if channel_norm == 0:
+                result[i, c] = channel
+                continue
+                
+            # Clip the channel if needed
+            if clip_norm > 0 and channel_norm > clip_norm:
+                channel = channel * (clip_norm / channel_norm)
+                channel_norm = clip_norm
+                
+            # Add noise scaled by channel norm
+            sigma = noise_multiplier * channel_norm
+            noise = torch.randn_like(channel, device=device) * sigma
+            result[i, c] = channel + noise
+            
+    return result
+
+def add_reduced_gaussian_noise(tensor, clip_norm, noise_multiplier, reduction_factor=0.5, device='cpu'):
+    """
+    Adds Gaussian noise with a reduced magnitude compared to standard DP.
+    This is a compromise approach that maintains some privacy while reducing
+    the impact on model performance.
+    
+    Args:
+        tensor: The input tensor (e.g., clipped activations or summed clipped gradients).
+        clip_norm: The L2 norm bound C used for clipping.
+        noise_multiplier: The noise multiplier z (sigma = z * C).
+        reduction_factor: Factor to reduce the noise by (default: 0.5).
+        device: The device to generate noise on ('cpu' or 'cuda').
+        
+    Returns:
+        Tensor with added reduced Gaussian noise.
+    """
+    # Simply scale down the noise multiplier
+    return add_gaussian_noise(tensor, clip_norm, noise_multiplier * reduction_factor, device)
+
+def clip_gradients(model, clip_norm):
+    """
+    Clips the L2 norm of gradients for each parameter in the model.
+    Note: This function clips the *aggregated* gradients attached to model.parameters().
+          For per-sample clipping as required by Mechanism 2, a different approach
+          (micro-batching loop during backward pass) is needed within the client logic.
+          This function is provided as a standard gradient clipping utility, but is
+          NOT the one used for the per-sample clipping requirement.
+    """
+    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+    return total_norm
+
+def clip_tensor(tensor, clip_norm):
+    """
+    Clips a tensor by its L2 norm.
+    
+    Args:
+        tensor: The tensor to clip
+        clip_norm: Maximum L2 norm
+        
+    Returns:
+        Clipped tensor
+    """
+    norm = torch.norm(tensor, p=2)
+    if norm > clip_norm:
+        tensor = tensor * (clip_norm / norm)
+    return tensor
+
+def clip_per_channel(tensor, clip_norm):
+    """
+    Clips each channel of a tensor independently by its L2 norm.
+    
+    Args:
+        tensor: The tensor to clip with shape [batch_size, channels, height, width]
+        clip_norm: Maximum L2 norm per channel
+        
+    Returns:
+        Tensor with each channel clipped
+    """
+    result = torch.zeros_like(tensor)
+    
+    # Process each sample in the batch
+    for i in range(tensor.shape[0]):
+        # Process each channel separately
+        for c in range(tensor.shape[1]):
+            channel = tensor[i, c]
+            channel_norm = torch.norm(channel, p=2)
+            
+            if channel_norm > clip_norm:
+                result[i, c] = channel * (clip_norm / channel_norm)
+            else:
+                result[i, c] = channel
+                
+    return result import torch
+
+def add_gaussian_noise(tensor, clip_norm, noise_multiplier, device='cpu'):
+    """
+    Adds Gaussian noise scaled by clip_norm and noise_multiplier.
+    Used for both activations and gradients in the unified DP approach.
+
+    Args:
+        tensor: The input tensor (e.g., clipped activations or summed clipped gradients).
+        clip_norm: The L2 norm bound C used for clipping.
+        noise_multiplier: The noise multiplier z (sigma = z * C).
+        device: The device to generate noise on ('cpu' or 'cuda').
+
+    Returns:
+        Tensor with added Gaussian noise.
+    """
+    if noise_multiplier < 0:
+        raise ValueError("Noise multiplier cannot be negative.")
+    if clip_norm <= 0:
+        # Allow clip_norm=0 for cases where no privacy is applied (noise_multiplier=0)
+        if noise_multiplier > 0:
+             raise ValueError("Clip norm must be positive if noise multiplier is positive.")
+        else:
+            # No clipping, no noise - return original tensor
+            return tensor
+
+    sigma = noise_multiplier * clip_norm
+
+    # If sigma is zero, no noise is added.
+    if sigma == 0.0:
+        return tensor
+
+    # Generate Gaussian noise N(0, sigma^2 * I)
+    gaussian_dist = torch.distributions.normal.Normal(loc=0.0, scale=sigma)
+    noise = gaussian_dist.sample(tensor.size()).to(device)
+
+    return tensor + noise
+
+def clip_gradients(model, clip_norm):
+    """
+    Clips the L2 norm of gradients for each parameter in the model.
+    Note: This function clips the *aggregated* gradients attached to model.parameters().
+          For per-sample clipping as required by Mechanism 2, a different approach
+          (micro-batching loop during backward pass) is needed within the client logic.
+          This function is provided as a standard gradient clipping utility, but is
+          NOT the one used for the per-sample clipping requirement.
+    """
+    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+    return total_norm
+
+def clip_tensor(tensor, clip_norm):
+    """
+    Clips a tensor by its L2 norm.
+    
+    Args:
+        tensor: The tensor to clip
+        clip_norm: Maximum L2 norm
+        
+    Returns:
+        Clipped tensor
+    """
+    norm = torch.norm(tensor, p=2)
+    if norm > clip_norm:
+        tensor = tensor * (clip_norm / norm)
+    return tensor #!/usr/bin/env python3
+import math
+from typing import List, Union
+
+# Helper functions (avoiding scipy)
+
+def _log_comb(n: int, k: int) -> float:
+    """Computes log(C(n, k)) using log gamma functions."""
+    if k < 0 or k > n:
+        return -float('inf') # Log of zero
+    # Using math.lgamma which computes log(Gamma(x)) = log((x-1)!)
+    # log(n! / (k! * (n-k)!)) = lgamma(n+1) - lgamma(k+1) - lgamma(n-k+1)
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+
+def _log_add_exp(log_a: float, log_b: float) -> float:
+    """Computes log(exp(log_a) + exp(log_b)) robustly."""
+    if log_a == -float('inf'):
+        return log_b
+    if log_b == -float('inf'):
+        return log_a
+    if log_a > log_b:
+        return log_a + math.log1p(math.exp(log_b - log_a))
+    else:
+        return log_b + math.log1p(math.exp(log_a - log_b))
+
+def _compute_rdp_epsilon_step(q: float, noise_multiplier: float, alpha: int) -> float:
+    """
+    Computes the Renyi Differential Privacy (RDP) epsilon for a single step
+    of the sampled Gaussian mechanism.
+
+    Based on Mironov (2017) "Renyi Differential Privacy" and Wang et al.
+    (Subsampled Renyi DP). This computes epsilon(alpha) for one step.
+
+    Args:
+        q: Sampling rate (probability).
+        noise_multiplier: The ratio of std deviation to the clipping norm (sigma/C).
+        alpha: The RDP order (integer > 1).
+
+    Returns:
+        The RDP epsilon for order alpha for a single step. Returns infinity if
+        noise_multiplier is zero and q > 0.
+    """
+    if q == 0:
+        return 0.0 # No privacy cost if not sampled
+    if q == 1.0:
+        # Standard (non-sampled) Gaussian mechanism RDP
+        if noise_multiplier == 0:
+             return float('inf') # Infinite privacy cost with zero noise
+        # RDP is alpha / (2 * sigma^2) where sigma is noise_multiplier
+        return alpha / (2.0 * noise_multiplier**2)
+    if noise_multiplier == 0:
+         return float('inf') # Infinite privacy cost if noise is zero and sampled
+
+    sigma_squared = noise_multiplier**2
+
+    # Compute the sum using log-sum-exp trick for numerical stability
+    log_sum_exp = -float('inf')
+    log_q = math.log(q)
+    log_1_minus_q = math.log1p(-q) # More accurate for small q
+
+    for k in range(alpha + 1):
+        log_comb_term = _log_comb(alpha, k)
+        if log_comb_term == -float('inf'):
+            continue # Skip k=0 or k=alpha if q=1 or q=0 handled above? Check logic. C(a,0)=1, C(a,a)=1.
+
+        # Term involving probabilities: k * log(q) + (alpha - k) * log(1-q)
+        log_prob_term = k * log_q + (alpha - k) * log_1_minus_q
+
+        # Term involving the RDP of non-sampled mechanism at order k
+        # We need exp((k-1) * rdp_epsilon(k)) = exp((k-1) * k / (2 * sigma^2))
+        # Handle k=0 and k=1 where the exponent term is 0 -> exp(0) = 1 -> log(1) = 0
+        log_exp_term = 0.0
+        if k > 1:
+            log_exp_term = (k - 1.0) * k / (2.0 * sigma_squared)
+
+        # Combine terms in log space: log(C(a,k) * q^k * (1-q)^(a-k) * exp(...))
+        current_term_log = log_comb_term + log_prob_term + log_exp_term
+
+        # Add to the total sum using log-add-exp
+        log_sum_exp = _log_add_exp(log_sum_exp, current_term_log)
+
+    # Final RDP epsilon is log(sum) / (alpha - 1)
+    rdp_epsilon = log_sum_exp / (alpha - 1.0)
+
+    return rdp_epsilon
+
+
+class ManualPrivacyAccountant:
+    """
+    Manually implemented Moments Accountant (based on Renyi DP) to track
+    cumulative privacy cost (epsilon, delta) for the Gaussian Noise mechanism
+    (Noise Mechanism 2: per-sample clipping + Gaussian noise) over steps.
+
+    Does NOT use external libraries like dp-accounting or Opacus.
+    Focuses solely on the privacy cost from Mechanism 2.
+    """
+    def __init__(self,
+                 moment_orders: List[Union[int, float]] = None):
+        """
+        Initializes the accountant.
+
+        Args:
+            moment_orders: A list of RDP orders (alpha values > 1) to track.
+                           If None, uses a default set.
+        """
+        # Use a default set of orders if none provided (common practice)
+        if moment_orders is None:
+            moment_orders = list(range(2, 33)) + [40.0, 48.0, 56.0, 64.0]
+            # Ensure orders are floats for calculations if needed later, although
+            # the current RDP formula assumes integer alphas for combinations.
+            # Let's keep them as provided or default integers/floats.
+            # For the current formula, ensure they are integers > 1
+            moment_orders = [int(a) for a in moment_orders if isinstance(a, (int, float)) and a > 1]
+            moment_orders = sorted(list(set(moment_orders))) # Unique & sorted
+
+        if not moment_orders or any(alpha <= 1 for alpha in moment_orders):
+            raise ValueError("Moment orders (alphas) must be > 1.")
+
+        self.moment_orders = moment_orders
+        # Store total accumulated RDP epsilon for each order alpha
+        self._total_rdp_epsilons = {alpha: 0.0 for alpha in self.moment_orders}
+        self._steps = 0 # Track total number of steps taken
+
+    def step(self, noise_multiplier: float, sampling_rate: float, num_steps: int = 1):
+        """
+        Records the privacy cost of applying the sampled Gaussian mechanism
+        for a number of steps.
+
+        Args:
+            noise_multiplier: The noise multiplier (sigma/C) used in the step(s).
+            sampling_rate: The sampling rate (q = batch_size / dataset_size) used.
+            num_steps: The number of steps taken with these parameters (default: 1).
+        """
+        if noise_multiplier < 0:
+            raise ValueError("Noise multiplier cannot be negative.")
+        if not (0 <= sampling_rate <= 1):
+            raise ValueError("Sampling rate must be between 0 and 1.")
+        if num_steps <= 0:
+            return # No steps taken
+
+        for alpha in self.moment_orders:
+            # Calculate RDP epsilon for a *single* step with these params
+            # Ensure alpha is int for _compute_rdp_epsilon_step as implemented
+            rdp_epsilon_step = _compute_rdp_epsilon_step(sampling_rate, noise_multiplier, int(alpha))
+
+            # Accumulate the total RDP epsilon for this order
+            self._total_rdp_epsilons[alpha] += num_steps * rdp_epsilon_step
+
+        self._steps += num_steps
+
+    def get_privacy_spent(self, delta: float) -> tuple[float, float]:
+        """
+        Computes the (epsilon, delta)-DP guarantee for the accumulated
+        privacy cost.
+
+        Args:
+            delta: The target delta. Must be > 0.
+
+        Returns:
+            A tuple (epsilon, delta) where epsilon is the smallest epsilon
+            found for the given delta across all tracked RDP orders.
+            Returns (inf, delta) if delta <= 0 or if epsilon is infinite for all orders.
+        """
+        if delta <= 0:
+            print("Warning: Target delta must be positive.")
+            # Or raise ValueError("Target delta must be positive.")
+            return float('inf'), delta
+
+        min_epsilon = float('inf')
+
+        for alpha in self.moment_orders:
+            total_rdp_epsilon = self._total_rdp_epsilons[alpha]
+
+            if total_rdp_epsilon == float('inf'):
+                continue # This alpha gives infinite epsilon
+
+            # Formula to convert RDP epsilon(alpha) to (epsilon, delta)-DP:
+            # epsilon = RDP_epsilon(alpha) - log(delta) / (alpha - 1)
+            epsilon = total_rdp_epsilon - (math.log(delta) / (alpha - 1.0))
+
+            # Ensure epsilon is not negative (can happen with large delta/small RDP)
+            # Privacy guarantees cannot have negative epsilon.
+            # Epsilon=0 means no privacy loss beyond delta.
+            epsilon = max(0.0, epsilon)
+
+            min_epsilon = min(min_epsilon, epsilon)
+
+        return min_epsilon, delta
+
+    @property
+    def total_steps(self):
+        return self._steps from .privacy_accountant import ManualPrivacyAccountant
+
+class VanillaGaussianAccountant(ManualPrivacyAccountant):
+    """
+    Same RDP machinery but σ is *frozen* at construction.
+    """
+    def __init__(self, noise_multiplier, sampling_rate,
+                 moment_orders=None):
+        super().__init__(moment_orders)
+        self.fixed_sigma = noise_multiplier
+        self.q = sampling_rate
+        self._eps_history = []  # Track epsilon history
+
+    def step(self, activation_noise_multiplier=0.0, gradient_noise_multiplier=None, sampling_rate=None, num_steps=1):
+        # Ignore activation_noise_multiplier as vanilla accountant only tracks gradient noise
+        # Use provided gradient_noise_multiplier or default to the fixed sigma
+        sigma = gradient_noise_multiplier if gradient_noise_multiplier is not None else self.fixed_sigma
+        q = sampling_rate if sampling_rate is not None else self.q
+        
+        # Call super().step to update the RDP values
+        super().step(sigma, q, num_steps)
+        
+        # Track epsilon after step
+        eps, _ = self.get_privacy_spent(delta=1e-5)  # Using a default delta for tracking
+        self._eps_history.append(eps)
+
+class UnifiedGaussianAccountant(ManualPrivacyAccountant):
+    """
+    Unified Gaussian accountant that tracks privacy loss from both activation noise
+    and gradient noise in a single privacy budget calculation. This replaces the
+    hybrid Laplace-Gaussian approach with a unified Gaussian-only mechanism.
+    """
+    def __init__(self, noise_multiplier, sampling_rate, moment_orders=None):
+        super().__init__(moment_orders)
+        self.initial_sigma = noise_multiplier
+        self.q = sampling_rate
+        self._eps_history = []  # Track epsilon history
+
+    def step(self, activation_noise_multiplier, gradient_noise_multiplier, sampling_rate=None, num_steps=1):
+        """
+        Updates the privacy accounting by combining privacy loss from both:
+        1. Gaussian noise added to client activations
+        2. Gaussian noise added to client gradients
+        
+        The privacy loss from both sources in a round is combined and added to the budget.
+        
+        Args:
+            activation_noise_multiplier: Noise scale for client activations
+            gradient_noise_multiplier: Noise scale for client gradients 
+            sampling_rate: Sampling probability (or use default from init)
+            num_steps: Number of steps to account for (default: 1)
+        """
+        # Use provided sampling_rate or default to initialization value
+        q = sampling_rate if sampling_rate is not None else self.q
+        
+        # Account for activation noise (if applied)
+        if activation_noise_multiplier > 0:
+            super().step(activation_noise_multiplier, q, num_steps)
+            
+        # Account for gradient noise (if applied)
+        if gradient_noise_multiplier > 0:
+            super().step(gradient_noise_multiplier, q, num_steps)
+            
+        # Track epsilon after both noise additions
+        eps, _ = self.get_privacy_spent(delta=1e-5)  # Using a default delta for tracking
+        self._eps_history.append(eps)
+
+def get_accountant(mode: str, **kw):
+    if mode == "vanilla":
+        return VanillaGaussianAccountant(**kw)
+    if mode == "adaptive":
+        return UnifiedGaussianAccountant(**kw)
+    if mode == "unified":
+        return UnifiedGaussianAccountant(**kw)
+    raise ValueError(f"Unknown accountant mode {mode}") from .simple_dnn import SimpleDNN
+from .simple_cnn import SimpleCNN
+from .bcw_dnn import BCWDNN
+
+def get_model(model_name):
+    """
+    Returns a model instance by name.
+    
+    Args:
+        model_name (str): Name of the model to instantiate.
+        
+    Returns:
+        Model instance.
+    """
+    if model_name == "SimpleDNN":
+        return SimpleDNN()
+    elif model_name == "SimpleCNN":
+        return SimpleCNN()
+    elif model_name == "BCWDNN":
+        return BCWDNN()
+    else:
+        raise ValueError(f"Unknown model: {model_name}") import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class BCWDNN(nn.Module):
+    """
+    A simple DNN model for the Breast Cancer Wisconsin dataset.
+    The model has 3 fully connected layers and is designed for binary classification.
+    
+    Input: 30 features (from the BCW dataset)
+    Output: 2 classes (benign or malignant)
+    """
+    def __init__(self):
+        super(BCWDNN, self).__init__()
+        # Input layer: 30 features from BCW dataset
+        self.fc1 = nn.Linear(30, 64)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.dropout1 = nn.Dropout(0.3)
+        
+        # Hidden layer
+        self.fc2 = nn.Linear(64, 32)
+        self.bn2 = nn.BatchNorm1d(32)
+        self.dropout2 = nn.Dropout(0.3)
+        
+        # Output layer for binary classification
+        self.fc3 = nn.Linear(32, 2)
+        
+    def forward(self, x):
+        # First fully connected layer with batch norm and dropout
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = self.dropout1(x)
+        
+        # Second fully connected layer with batch norm and dropout
+        x = self.fc2(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = self.dropout2(x)
+        
+        # Output layer
+        x = self.fc3(x)
+        return x
+        
+    def get_layers(self):
+        """Return a list of layers in the model for splitting purposes."""
+        return [
+            self.fc1,
+            self.bn1,
+            nn.ReLU(),
+            self.dropout1,
+            self.fc2,
+            self.bn2,
+            nn.ReLU(),
+            self.dropout2,
+            self.fc3
+        ] import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SimpleCNN(nn.Module):
+    """A simple CNN architecture for MNIST as specified."""
+    def __init__(self, num_classes=10):
+        super(SimpleCNN, self).__init__()
+        # Layer definitions
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+        self.relu1 = nn.ReLU()
+        self.pool1 = nn.MaxPool2d(2)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+        self.relu2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(2)
+        self.flatten = nn.Flatten()
+        # Calculate the flattened size dynamically (assuming 28x28 input)
+        # Input: 1x28x28
+        # conv1: 10x24x24 -> pool1: 10x12x12
+        # conv2: 20x8x8 -> pool2: 20x4x4
+        # flatten: 20 * 4 * 4 = 320
+        self.fc1 = nn.Linear(320, 50)
+        self.relu3 = nn.ReLU()
+        self.fc2 = nn.Linear(50, num_classes)
+
+        # Store layers in a list for easy splitting
+        # Note: This includes activation and pooling layers by default
+        self._layers = [
+            self.conv1, self.relu1, self.pool1,
+            self.conv2, self.relu2, self.pool2,
+            self.flatten, self.fc1, self.relu3, self.fc2
+        ]
+
+    def forward(self, x):
+        for layer in self._layers:
+            x = layer(x)
+        return x
+
+    def get_layers(self):
+        """Returns the list of layers for splitting."""
+        return self._layers
+
+def get_model(name="SimpleCNN", **kwargs):
+    if name == "SimpleCNN":
+        return SimpleCNN(**kwargs)
+    else:
+        raise ValueError(f"Model {name} not recognized.") import torch
+import torch.nn as nn
+
+class SimpleDNN(nn.Module):
+    """A simple DNN architecture for MNIST as specified."""
+    def __init__(self, input_size=784, num_classes=10):
+        super(SimpleDNN, self).__init__()
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(input_size, 128)
+        self.relu1 = nn.ReLU()
+        self.fc2 = nn.Linear(128, 128)
+        self.relu2 = nn.ReLU()
+        self.fc3 = nn.Linear(128, 32)
+        self.relu3 = nn.ReLU()
+        self.fc4 = nn.Linear(32, num_classes)
+
+        # Store layers in a list for easy splitting
+        self._layers = [
+            self.flatten, self.fc1, self.relu1,
+            self.fc2, self.relu2,
+            self.fc3, self.relu3, self.fc4
+        ]
+
+    def forward(self, x):
+        for layer in self._layers:
+            x = layer(x)
+        return x
+
+    def get_layers(self):
+        """Returns the list of layers for splitting."""
+        return self._layers import torch
+import torch.nn as nn
+from collections import OrderedDict
+
+class SplitModel(nn.Module):
+    """Wraps a model to split it into client and server parts."""
+    def __init__(self, full_model, cut_layer_idx):
+        super(SplitModel, self).__init__()
+
+        if not hasattr(full_model, 'get_layers'):
+            raise ValueError("Model must have a 'get_layers' method returning a list of its layers.")
+
+        all_layers = full_model.get_layers()
+        if cut_layer_idx < 0 or cut_layer_idx >= len(all_layers):
+            raise ValueError(f"Invalid cut_layer_idx: {cut_layer_idx}. Must be between 0 and {len(all_layers) - 1}.")
+
+        self.client_part = nn.Sequential(*all_layers[:cut_layer_idx+1])
+        self.server_part = nn.Sequential(*all_layers[cut_layer_idx+1:])
+
+    def forward(self, x):
+        # This forward is primarily for verification/combined model usage.
+        # In SFL, client_part and server_part are run separately.
+        x = self.client_part(x)
+        x = self.server_part(x)
+        return x
+
+def split_model(model, cut_layer_idx):
+    """Splits a model into client and server parts at the specified index."""
+    if not hasattr(model, 'get_layers'):
+        raise ValueError("Model must have a 'get_layers' method returning a list of its layers.")
+
+    all_layers = model.get_layers()
+    if cut_layer_idx < 0 or cut_layer_idx >= len(all_layers):
+        raise ValueError(f"Invalid cut_layer_idx: {cut_layer_idx}. Must be between 0 and {len(all_layers) - 1}.")
+
+    client_model = nn.Sequential(*all_layers[:cut_layer_idx+1])
+    server_model = nn.Sequential(*all_layers[cut_layer_idx+1:])
+
+    return client_model, server_model
+
+def get_combined_model(client_model_state_dict, server_model_state_dict, full_model_template):
+    """Recombines client and server state dicts into a full model template for evaluation."""
+    client_keys = client_model_state_dict.keys()
+    server_keys = server_model_state_dict.keys()
+
+    combined_state_dict = OrderedDict()
+
+    # Load parameters, ensuring correct mapping based on layer names in the template
+    full_model_dict = full_model_template.state_dict()
+    client_layers_params = set()
+    for param_name in client_keys:
+        # Map sequential name (e.g., '0.weight') to original name if possible (requires careful naming)
+        # Simpler approach: Assume the state dicts correspond to the Sequential structure directly
+        combined_state_dict[param_name] = client_model_state_dict[param_name]
+        client_layers_params.add(param_name.split('.')[0]) # Track which layers belong to client
+
+    for param_name in server_keys:
+        combined_state_dict[param_name] = server_model_state_dict[param_name]
+
+    # Verify all keys are covered (optional)
+    # assert set(combined_state_dict.keys()) == set(full_model_dict.keys())
+
+    full_model_template.load_state_dict(combined_state_dict)
+    return full_model_template  import torch
+from collections import OrderedDict
+from typing import List, Dict
+
+def federated_averaging(updates: List[OrderedDict]) -> OrderedDict:
+    """
+    Performs Federated Averaging (FedAvg) on a list of state dict updates.
+
+    Args:
+        updates: A list where each element is an OrderedDict representing
+                 a model's state_dict or gradients (from model.named_parameters()).
+
+    Returns:
+        An OrderedDict representing the averaged state_dict or gradients.
+    """
+    if not updates:
+        return OrderedDict()
+
+    # Initialize averaged update with zeros, based on the structure of the first update
+    averaged_update = OrderedDict()
+    for key, tensor in updates[0].items():
+        averaged_update[key] = torch.zeros_like(tensor)
+
+    # Sum up all updates
+    num_updates = len(updates)
+    for update in updates:
+        for key, tensor in update.items():
+            if key in averaged_update:
+                averaged_update[key] += tensor.detach().clone() # Use detach().clone() to avoid modifying originals
+            else:
+                # This shouldn't happen if all updates have the same structure
+                print(f"Warning: Key '{key}' not found in initial update structure. Skipping.")
+
+    # Divide by the number of updates to get the average
+    for key in averaged_update:
+        averaged_update[key] /= num_updates
+
+    return averaged_update
+
+def federated_averaging_gradients(gradients_list: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    """
+    Performs Federated Averaging specifically on a list of gradients.
+    Assumes gradients are stored as Dict[parameter_name, gradient_tensor].
+    This is essentially the same as federated_averaging but with explicit typing for gradients.
+
+    Args:
+        gradients_list: A list where each element is a dictionary mapping parameter
+                        names to their gradient tensors.
+
+    Returns:
+        A dictionary representing the averaged gradients.
+    """
+    if not gradients_list:
+        return {}
+
+    # Initialize averaged gradients with zeros, based on the first client's gradients
+    averaged_gradients = OrderedDict()
+    for key, tensor in gradients_list[0].items():
+        averaged_gradients[key] = torch.zeros_like(tensor)
+
+    # Sum up all gradients
+    num_gradients = len(gradients_list)
+    for gradients in gradients_list:
+        for key, tensor in gradients.items():
+            if key in averaged_gradients:
+                # Ensure gradients are properly detached if they come from autograd graph
+                averaged_gradients[key] += tensor.detach().clone()
+            else:
+                print(f"Warning: Gradient key '{key}' not found in initial structure. Skipping.")
+
+    # Average the gradients
+    for key in averaged_gradients:
+        averaged_gradients[key] /= num_gradients
+
+    return averaged_gradients import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from collections import OrderedDict
+from typing import Tuple, Dict
+
+# Assuming noise_utils.py is in src/dp/
+from ..dp import noise_utils
+
+class SFLClient:
+    """
+    Client in SFLV1.
+    Manages local data, client-side model (WC), performs local computations,
+    applies noise, and communicates intermediate results.
+    """
+    def __init__(self, client_id: int, client_model: nn.Module, dataloader: DataLoader, config: dict, device: torch.device):
+        """
+        Args:
+            client_id: Unique identifier for the client.
+            client_model: A *copy* of the initial client-side model (WC) architecture.
+            dataloader: DataLoader for the client's local dataset partition.
+            config: Configuration dictionary.
+            device: The torch device ('cpu' or 'cuda').
+        """
+        self.client_id = client_id
+        self.client_model = client_model.to(device)
+        self.dataloader = dataloader
+        self.config = config
+        self.device = device
+        self.optimizer = self._create_optimizer() # Optimizer for WC
+
+        # Store intermediate activation for backward pass
+        self._activations = None
+        self._data_batch = None # Store data batch to access individual samples for clipping
+        self._labels_batch = None # Store labels corresponding to the data batch
+
+        # Adaptive DP: Store previous round's gradient norms and current noise scale
+        self._prev_round_grad_norms = None
+        self._current_clip_threshold = config['dp_noise']['clip_norm'] # Initial threshold
+        self._current_sigma = config['dp_noise']['initial_sigma'] # Initial noise scale
+        
+        # Activation clipping and noise parameters
+        self._activation_clip_norm = config['dp_noise'].get('activation_clip_norm', 1.0)
+        self._activation_noise_multiplier = config['dp_noise'].get('activation_noise_multiplier', 1.0)
+
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Creates the optimizer for the client-side model (WC)."""
+        lr = self.config.get('lr', 0.01)
+        optimizer_name = self.config.get('optimizer', 'SGD').lower()
+        if optimizer_name == 'sgd':
+            return optim.SGD(self.client_model.parameters(), lr=lr)
+        elif optimizer_name == 'adam':
+            return optim.Adam(self.client_model.parameters(), lr=lr)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+    def set_model_params(self, global_params: OrderedDict):
+        """Updates the local client model (WC) with parameters from the FedServer."""
+        self.client_model.load_state_dict(global_params)
+
+    def update_noise_scale(self, new_sigma: float):
+        """Updates the current noise scale sigma_t."""
+        self._current_sigma = new_sigma
+
+    def _calculate_adaptive_clip_threshold(self) -> float:
+        """Calculates the adaptive clipping threshold Ck_t for the current round."""
+        # Check if adaptive clipping is disabled (adaptive_clipping_factor = 0.0)
+        if self.config['dp_noise']['adaptive_clipping_factor'] == 0.0:
+            # For fixed DP, always use the initial clip norm
+            return self.config['dp_noise']['clip_norm']
+            
+        if self._prev_round_grad_norms is None:
+            # First round: use initial threshold
+            return self.config['dp_noise']['clip_norm']
+        
+        # Calculate mean norm from previous round
+        mean_norm = torch.mean(torch.tensor(self._prev_round_grad_norms, device=self.device))
+        # Apply adaptive factor
+        adaptive_factor = self.config['dp_noise']['adaptive_clipping_factor']
+        return float(adaptive_factor * mean_norm)
+
+    def local_forward_pass(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Performs the forward pass on the client model (WC) using one batch of local data.
+        Clips activations and applies Gaussian noise before returning.
+        """
+        try:
+            data, labels = next(iter(self.dataloader))
+        except StopIteration:
+            print(f"Client {self.client_id}: Dataloader exhausted. Re-initializing for simulation.")
+            self.dataloader = DataLoader(self.dataloader.dataset, batch_size=self.config['batch_size'], shuffle=True)
+            data, labels = next(iter(self.dataloader))
+
+        data, labels = data.to(self.device), labels.to(self.device)
+        self._data_batch = data
+        self._labels_batch = labels
+
+        self.optimizer.zero_grad()
+        activations = self.client_model(data)
+
+        # First clip the activations before adding noise (Unified Gaussian approach)
+        if self._activation_clip_norm > 0:
+            # Clip each activation row (per sample) individually
+            clipped_activations = torch.zeros_like(activations)
+            for i in range(activations.shape[0]):
+                clipped_activations[i] = noise_utils.clip_tensor(
+                    activations[i], 
+                    self._activation_clip_norm
+                )
+            activations = clipped_activations
+
+        # Apply Gaussian noise to clipped activations
+        if self._activation_noise_multiplier > 0:
+            noisy_activations = noise_utils.add_gaussian_noise(
+                activations,
+                self._activation_clip_norm,
+                self._activation_noise_multiplier,
+                device=self.device
+            )
+        else:
+            noisy_activations = activations
+
+        self._activations_for_backward = noisy_activations
+        return noisy_activations.detach().clone(), labels.clone()
+
+    def local_backward_pass(self, activation_grads: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Performs the backward pass with adaptive clipping and noise.
+        """
+        if self._activations_for_backward is None or self._data_batch is None:
+            raise RuntimeError("Client must perform forward pass before backward pass.")
+
+        # Calculate adaptive clipping threshold for this round
+        self._current_clip_threshold = self._calculate_adaptive_clip_threshold()
+        
+        summed_clipped_grads = OrderedDict([(name, torch.zeros_like(param)) 
+                                          for name, param in self.client_model.named_parameters() 
+                                          if param.requires_grad])
+        
+        batch_size = self._data_batch.size(0)
+        activation_grads = activation_grads.to(self.device)
+        current_round_grad_norms = [] # Store norms for next round's threshold calculation
+
+        # Per-sample gradient computation with adaptive clipping
+        for i in range(batch_size):
+            self.optimizer.zero_grad()
+            sample_activation = self._activations_for_backward[i:i+1]
+            sample_activation_grad = activation_grads[i:i+1]
+            
+            sample_activation.backward(gradient=sample_activation_grad, retain_graph=True)
+            
+            # Calculate L2 norm of gradients for this sample
+            total_norm_sq = torch.zeros(1, device=self.device)
+            for name, param in self.client_model.named_parameters():
+                if param.grad is not None:
+                    total_norm_sq += param.grad.norm(2).item() ** 2
+            
+            total_norm = torch.sqrt(total_norm_sq)
+            current_round_grad_norms.append(total_norm.item())
+            
+            # Clip gradients using adaptive threshold
+            clip_coef = min(1.0, self._current_clip_threshold / (total_norm + 1e-6))
+            
+            for name, param in self.client_model.named_parameters():
+                if param.grad is not None:
+                    summed_clipped_grads[name] += param.grad.data * clip_coef
+
+        # Store gradient norms for next round's threshold calculation
+        self._prev_round_grad_norms = current_round_grad_norms
+
+        # Add Gaussian noise with adaptive scale
+        noisy_gradients = OrderedDict()
+        if self._current_sigma > 0:
+            for name, summed_grad in summed_clipped_grads.items():
+                noisy_gradients[name] = noise_utils.add_gaussian_noise(
+                    summed_grad,
+                    self._current_clip_threshold,
+                    self._current_sigma,
+                    device=self.device
+                )
+        else:
+            noisy_gradients = summed_clipped_grads
+
+        # Clear intermediate values
+        self._activations_for_backward = None
+        self._data_batch = None
+        self._labels_batch = None
+        self.optimizer.zero_grad()
+
+        return noisy_gradients
+
+    # Optional: If clients also update their models locally after backward pass
+    # def local_update(self, gradients): # Needs adjustment based on SFL protocol
+    #     self.optimizer.zero_grad()
+    #     with torch.no_grad():
+    #         for name, param in self.client_model.named_parameters():
+    #             if name in gradients:
+    #                 param.grad = gradients[name]
+    #     self.optimizer.step() import torch
+import torch.nn as nn
+import torch.optim as optim # Import optim
+from collections import OrderedDict
+from typing import List, Dict
+import numpy as np
+
+from .aggregation import federated_averaging_gradients, federated_averaging
+
+class FedServer:
+    """
+    Federated Server (FedServer) in SFLV1.
+    Manages the global client-side model (WC) and aggregates client updates.
+    """
+    def __init__(self, client_model: nn.Module, config: dict, device: torch.device):
+        """
+        Args:
+            client_model: An instance of the client-side model (WC) architecture.
+            config: Configuration dictionary.
+            device: The torch device ('cpu' or 'cuda').
+        """
+        self.client_model = client_model.to(device) # Holds the global WC parameters
+        self.config = config
+        self.device = device
+        self.optimizer = self._create_optimizer() # Add optimizer for WC
+        self._client_updates = [] # Stores received client updates (gradients or models) in a round
+
+        # Adaptive DP: Track validation loss and noise scale
+        self._current_sigma = config['dp_noise']['initial_sigma']
+        self._validation_losses = []  # Store recent validation losses
+        self._noise_decay_patience = config['dp_noise']['noise_decay_patience']
+        self._adaptive_noise_decay_factor = config['dp_noise']['adaptive_noise_decay_factor']
+        self._criterion = nn.CrossEntropyLoss()
+        self._sigma_history = [self._current_sigma]  # Track sigma history
+
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Creates the optimizer for the global client-side model (WC)."""
+        lr = self.config.get('lr', 0.01)
+        optimizer_name = self.config.get('optimizer', 'SGD').lower()
+
+        if optimizer_name == 'sgd':
+            # Consider adding momentum here if needed based on config
+            return optim.SGD(self.client_model.parameters(), lr=lr)
+        elif optimizer_name == 'adam':
+            return optim.Adam(self.client_model.parameters(), lr=lr)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+    def get_client_model_params(self) -> OrderedDict:
+        """Returns the state dictionary of the current global client model (WC)."""
+        return self.client_model.state_dict()
+
+    def receive_client_update(self, client_update: Dict[str, torch.Tensor]):
+        """
+        Receives and stores an update (typically gradients) from a client.
+
+        Args:
+            client_update: A dictionary containing the gradients or model parameters from a client.
+                           Gradients must be detached and moved to the correct device if necessary
+                           before being sent here.
+        """
+        # Ensure updates are on the correct device and detached
+        processed_update = OrderedDict()
+        for name, param in client_update.items():
+            processed_update[name] = param.detach().clone().to(self.device)
+        self._client_updates.append(processed_update)
+
+    def evaluate_validation_loss(self, validation_loader) -> float:
+        """
+        Evaluates the current model on the validation set.
+        """
+        self.client_model.eval()
+        total_loss = 0.0
+        with torch.no_grad():
+            for data, labels in validation_loader:
+                data, labels = data.to(self.device), labels.to(self.device)
+                outputs = self.client_model(data)
+                loss = self._criterion(outputs, labels)
+                total_loss += loss.item()
+        return total_loss / len(validation_loader)
+
+    def evaluate_metrics(self, validation_loader, main_server=None) -> tuple:
+        """
+        Evaluates and prints both validation loss and accuracy.
+        If main_server is provided, evaluates the complete model (client+server).
+        Otherwise, just evaluates the client part (which will show poor metrics).
+        
+        Args:
+            validation_loader: DataLoader for validation set
+            main_server: Optional MainServer instance to evaluate complete model
+            
+        Returns:
+            tuple: (validation_loss, accuracy)
+        """
+        self.client_model.eval()
+        total_loss = 0.0
+        correct = 0
+        total = 0
+        
+        # Check if we can evaluate complete model
+        evaluate_complete = main_server is not None
+        
+        if evaluate_complete:
+            # Get server model
+            server_model = main_server.get_server_model()
+            server_model.eval()
+        
+        with torch.no_grad():
+            for data, labels in validation_loader:
+                data, labels = data.to(self.device), labels.to(self.device)
+                
+                # Forward pass through client model
+                client_outputs = self.client_model(data)
+                
+                if evaluate_complete:
+                    # Complete forward pass through server model
+                    outputs = server_model(client_outputs)
+                    loss = main_server.get_criterion()(outputs, labels)
+                    
+                    # Calculate accuracy
+                    _, predicted = torch.max(outputs.data, 1)
+                else:
+                    # Just use client outputs (which aren't actual predictions)
+                    outputs = client_outputs
+                    # Using CrossEntropyLoss directly on activations doesn't make sense
+                    # but keeping it to maintain backward compatibility
+                    loss = self._criterion(outputs, labels)
+                    
+                    # This won't be meaningful but keeping for compatibility
+                    _, predicted = torch.max(outputs.data, 1)
+                
+                total_loss += loss.item()
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+        
+        avg_loss = total_loss / len(validation_loader)
+        accuracy = 100 * correct / total
+        
+        print(f"\nValidation Metrics:")
+        if evaluate_complete:
+            print(f"Complete Model - Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
+        else:
+            print(f"Client Model Only (incomplete) - Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
+            print(f"Warning: These metrics are for the client model part only and don't reflect actual performance.")
+        
+        return avg_loss, accuracy
+
+    def _update_noise_scale(self, validation_loss: float):
+        """
+        Updates the noise scale based on validation loss trend.
+        """
+        self._validation_losses.append(validation_loss)
+        
+        # Check if we have enough history to make a decision
+        if len(self._validation_losses) < self._noise_decay_patience + 1:
+            return
+        
+        # Check if loss has been decreasing for the required number of rounds
+        recent_losses = self._validation_losses[-self._noise_decay_patience:]
+        is_decreasing = all(recent_losses[i] > recent_losses[i+1] 
+                          for i in range(len(recent_losses)-1))
+        
+        if is_decreasing:
+            # Decrease noise scale
+            self._current_sigma *= self._adaptive_noise_decay_factor
+            print(f"FedServer: Loss decreasing for {self._noise_decay_patience} rounds. "
+                  f"Updated noise scale to {self._current_sigma:.4f}")
+            # Track sigma change
+            self._sigma_history.append(self._current_sigma)
+
+    def get_current_sigma(self) -> float:
+        """Returns the current noise scale sigma_t."""
+        return self._current_sigma
+
+    def aggregate_updates(self, validation_loader=None, main_server=None):
+        """
+        Aggregates the received client updates using FedAvg and updates the global client model (WC)
+        using its optimizer.
+        Clears the stored updates after aggregation.
+        
+        Args:
+            validation_loader: Optional dataloader for validation
+            main_server: Optional MainServer instance to evaluate complete model
+        """
+        if not self._client_updates:
+            print("FedServer: No client updates received for aggregation.")
+            return
+
+        # Assume updates are gradients based on SFLV1 flow (noisy ∇WCk,t)
+        averaged_gradients = federated_averaging_gradients(self._client_updates)
+
+        # Update the global client model parameters using the averaged gradients via the optimizer
+        self.optimizer.zero_grad()
+        with torch.no_grad(): # Manually assign gradients
+            for name, param in self.client_model.named_parameters():
+                if name in averaged_gradients:
+                    if param.grad is None:
+                        param.grad = torch.zeros_like(param)
+                    param.grad.copy_(averaged_gradients[name])
+                else:
+                    # This case might indicate an issue - all client params should ideally get grads
+                    print(f"Warning: Averaged gradient for '{name}' not found during FedServer update.")
+                    if param.grad is not None:
+                        param.grad.zero_() # Zero out if it exists but wasn't in average
+
+        self.optimizer.step() # Update parameters using assigned gradients
+
+        # Update noise scale and evaluate metrics if validation loader is provided
+        if validation_loader is not None:
+            validation_loss, accuracy = self.evaluate_metrics(validation_loader, main_server)
+            self._update_noise_scale(validation_loss)
+
+        # Clear updates for the next round
+        self._client_updates = []
+
+        # Count how many parameter groups were updated by the optimizer
+        updated_param_count = sum(1 for group in self.optimizer.param_groups for p in group['params'])
+        print(f"FedServer: Aggregated client updates and updated WC model ({updated_param_count} params) via optimizer.")
+
+    def get_client_model(self) -> nn.Module:
+        """Returns the current global client model instance."""
+        return self.client_model import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from collections import OrderedDict
+from typing import Tuple, Dict
+
+# Import the improved noise utilities
+from ..dp import improved_noise_utils as noise_utils
+
+class ImprovedSFLClient:
+    """
+    Improved version of SFLClient with better noise handling options.
+    Manages local data, client-side model (WC), performs local computations,
+    applies noise, and communicates intermediate results.
+    """
+    def __init__(self, client_id: int, client_model: nn.Module, dataloader: DataLoader, 
+                 config: dict, device: torch.device, noise_mode: str = 'tensor'):
+        """
+        Args:
+            client_id: Unique identifier for the client.
+            client_model: A *copy* of the initial client-side model (WC) architecture.
+            dataloader: DataLoader for the client's local dataset partition.
+            config: Configuration dictionary.
+            device: The torch device ('cpu' or 'cuda').
+            noise_mode: Type of noise to apply ('tensor', 'channel', 'reduced', 'none').
+        """
+        self.client_id = client_id
+        self.client_model = client_model.to(device)
+        self.dataloader = dataloader
+        self.config = config
+        self.device = device
+        self.optimizer = self._create_optimizer() # Optimizer for WC
+        self.noise_mode = noise_mode
+
+        # Store intermediate activation for backward pass
+        self._activations = None
+        self._data_batch = None # Store data batch to access individual samples for clipping
+        self._labels_batch = None # Store labels corresponding to the data batch
+
+        # Adaptive DP: Store previous round's gradient norms and current noise scale
+        self._prev_round_grad_norms = None
+        self._current_clip_threshold = config['dp_noise']['clip_norm'] # Initial threshold
+        self._current_sigma = config['dp_noise']['initial_sigma'] # Initial noise scale
+        
+        # Activation clipping and noise parameters
+        self._activation_clip_norm = config['dp_noise'].get('activation_clip_norm', 1.0)
+        self._activation_noise_multiplier = config['dp_noise'].get('activation_noise_multiplier', 1.0)
+        
+        # Optional noise reduction factor (used with 'reduced' mode)
+        self._noise_reduction_factor = config['dp_noise'].get('noise_reduction_factor', 0.5)
+
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Creates the optimizer for the client-side model (WC)."""
+        lr = self.config.get('lr', 0.01)
+        optimizer_name = self.config.get('optimizer', 'SGD').lower()
+        if optimizer_name == 'sgd':
+            return optim.SGD(self.client_model.parameters(), lr=lr)
+        elif optimizer_name == 'adam':
+            return optim.Adam(self.client_model.parameters(), lr=lr)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+    def set_model_params(self, global_params: OrderedDict):
+        """Updates the local client model (WC) with parameters from the FedServer."""
+        self.client_model.load_state_dict(global_params)
+
+    def update_noise_scale(self, new_sigma: float):
+        """Updates the current noise scale sigma_t."""
+        self._current_sigma = new_sigma
+
+    def set_noise_mode(self, mode: str):
+        """
+        Change the noise mode at runtime.
+        
+        Args:
+            mode: One of 'tensor', 'channel', 'reduced', 'none'
+        """
+        valid_modes = ['tensor', 'channel', 'reduced', 'none']
+        if mode not in valid_modes:
+            raise ValueError(f"Invalid noise mode '{mode}'. Must be one of {valid_modes}")
+        self.noise_mode = mode
+
+    def _calculate_adaptive_clip_threshold(self) -> float:
+        """Calculates the adaptive clipping threshold Ck_t for the current round."""
+        # Check if adaptive clipping is disabled (adaptive_clipping_factor = 0.0)
+        if self.config['dp_noise']['adaptive_clipping_factor'] == 0.0:
+            # For fixed DP, always use the initial clip norm
+            return self.config['dp_noise']['clip_norm']
+            
+        if self._prev_round_grad_norms is None:
+            # First round: use initial threshold
+            return self.config['dp_noise']['clip_norm']
+        
+        # Calculate mean norm from previous round
+        mean_norm = torch.mean(torch.tensor(self._prev_round_grad_norms, device=self.device))
+        # Apply adaptive factor
+        adaptive_factor = self.config['dp_noise']['adaptive_clipping_factor']
+        return float(adaptive_factor * mean_norm)
+
+    def local_forward_pass(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Performs the forward pass on the client model (WC) using one batch of local data.
+        Clips activations and applies noise according to the selected noise_mode.
+        """
+        try:
+            data, labels = next(iter(self.dataloader))
+        except StopIteration:
+            print(f"Client {self.client_id}: Dataloader exhausted. Re-initializing for simulation.")
+            self.dataloader = DataLoader(self.dataloader.dataset, batch_size=self.config['batch_size'], shuffle=True)
+            data, labels = next(iter(self.dataloader))
+
+        data, labels = data.to(self.device), labels.to(self.device)
+        self._data_batch = data
+        self._labels_batch = labels
+
+        self.optimizer.zero_grad()
+        activations = self.client_model(data)
+
+        # Apply clipping based on noise mode
+        if self._activation_clip_norm > 0:
+            if self.noise_mode == 'channel':
+                # Clip each channel independently
+                activations = noise_utils.clip_per_channel(
+                    activations, 
+                    self._activation_clip_norm
+                )
+            else:
+                # Standard tensor-wise clipping
+                clipped_activations = torch.zeros_like(activations)
+                for i in range(activations.shape[0]):
+                    clipped_activations[i] = noise_utils.clip_tensor(
+                        activations[i], 
+                        self._activation_clip_norm
+                    )
+                activations = clipped_activations
+
+        # Apply noise based on selected mode
+        if self._activation_noise_multiplier > 0:
+            if self.noise_mode == 'none':
+                # No noise
+                noisy_activations = activations
+            elif self.noise_mode == 'channel':
+                # Per-channel noise
+                noisy_activations = noise_utils.add_per_channel_gaussian_noise(
+                    activations,
+                    self._activation_clip_norm,
+                    self._activation_noise_multiplier,
+                    device=self.device
+                )
+            elif self.noise_mode == 'reduced':
+                # Reduced noise
+                noisy_activations = noise_utils.add_reduced_gaussian_noise(
+                    activations,
+                    self._activation_clip_norm,
+                    self._activation_noise_multiplier,
+                    reduction_factor=self._noise_reduction_factor,
+                    device=self.device
+                )
+            else:  # 'tensor' (default)
+                # Standard tensor-wide Gaussian noise
+                noisy_activations = noise_utils.add_gaussian_noise(
+                    activations,
+                    self._activation_clip_norm,
+                    self._activation_noise_multiplier,
+                    device=self.device
+                )
+        else:
+            noisy_activations = activations
+
+        self._activations_for_backward = noisy_activations
+        return noisy_activations.detach().clone(), labels.clone()
+
+    def local_backward_pass(self, activation_grads: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Performs the backward pass with adaptive clipping and noise.
+        """
+        if self._activations_for_backward is None or self._data_batch is None:
+            raise RuntimeError("Client must perform forward pass before backward pass.")
+
+        # Calculate adaptive clipping threshold for this round
+        self._current_clip_threshold = self._calculate_adaptive_clip_threshold()
+        
+        summed_clipped_grads = OrderedDict([(name, torch.zeros_like(param)) 
+                                          for name, param in self.client_model.named_parameters() 
+                                          if param.requires_grad])
+        
+        batch_size = self._data_batch.size(0)
+        activation_grads = activation_grads.to(self.device)
+        current_round_grad_norms = [] # Store norms for next round's threshold calculation
+
+        # Per-sample gradient computation with adaptive clipping
+        for i in range(batch_size):
+            self.optimizer.zero_grad()
+            sample_activation = self._activations_for_backward[i:i+1]
+            sample_activation_grad = activation_grads[i:i+1]
+            
+            sample_activation.backward(gradient=sample_activation_grad, retain_graph=True)
+            
+            # Calculate L2 norm of gradients for this sample
+            total_norm_sq = torch.zeros(1, device=self.device)
+            for name, param in self.client_model.named_parameters():
+                if param.grad is not None:
+                    total_norm_sq += param.grad.norm(2).item() ** 2
+            
+            total_norm = torch.sqrt(total_norm_sq)
+            current_round_grad_norms.append(total_norm.item())
+            
+            # Clip gradients using adaptive threshold
+            clip_coef = min(1.0, self._current_clip_threshold / (total_norm + 1e-6))
+            
+            for name, param in self.client_model.named_parameters():
+                if param.grad is not None:
+                    summed_clipped_grads[name] += param.grad.data * clip_coef
+
+        # Store gradient norms for next round's threshold calculation
+        self._prev_round_grad_norms = current_round_grad_norms
+
+        # Add noise based on selected mode
+        noisy_gradients = OrderedDict()
+        if self._current_sigma > 0:
+            if self.noise_mode == 'none':
+                # No noise
+                noisy_gradients = summed_clipped_grads
+            elif self.noise_mode == 'reduced':
+                # Reduced noise
+                for name, summed_grad in summed_clipped_grads.items():
+                    noisy_gradients[name] = noise_utils.add_reduced_gaussian_noise(
+                        summed_grad,
+                        self._current_clip_threshold,
+                        self._current_sigma,
+                        reduction_factor=self._noise_reduction_factor,
+                        device=self.device
+                    )
+            else:  # 'tensor' or 'channel' (both use the same gradient noise)
+                # Standard tensor-wide Gaussian noise for gradients
+                for name, summed_grad in summed_clipped_grads.items():
+                    noisy_gradients[name] = noise_utils.add_gaussian_noise(
+                        summed_grad,
+                        self._current_clip_threshold,
+                        self._current_sigma,
+                        device=self.device
+                    )
+        else:
+            noisy_gradients = summed_clipped_grads
+
+        # Clear intermediate values
+        self._activations_for_backward = None
+        self._data_batch = None
+        self._labels_batch = None
+        self.optimizer.zero_grad()
+
+        return noisy_gradients import torch
+import torch.nn as nn
+import torch.optim as optim
+from collections import OrderedDict
+from typing import Dict, Tuple, List
+
+from .aggregation import federated_averaging_gradients
+
+class MainServer:
+    """
+    Main Server in SFLV1.
+    Manages the server-side model (WS), performs server-side computations,
+    and aggregates WS updates.
+    """
+    def __init__(self, server_model: nn.Module, config: dict, device: torch.device):
+        """
+        Args:
+            server_model: An instance of the server-side model (WS) architecture.
+            config: Configuration dictionary.
+            device: The torch device ('cpu' or 'cuda').
+        """
+        self.server_model = server_model.to(device)
+        self.config = config
+        self.device = device
+        self.optimizer = self._create_optimizer()
+        self.criterion = nn.CrossEntropyLoss() # Assuming classification task
+
+        # Store intermediate values needed for backward pass and aggregation
+        self._client_activations: Dict[int, torch.Tensor] = {} # {client_id: A_k,t}
+        self._client_labels: Dict[int, torch.Tensor] = {}    # {client_id: Y_k}
+        self._server_gradients: List[Dict[str, torch.Tensor]] = [] # Stores ∇WS_k from each client
+
+    def _create_optimizer(self) -> optim.Optimizer:
+        """Creates the optimizer for the server-side model (WS)."""
+        lr = self.config.get('lr', 0.01)
+        optimizer_name = self.config.get('optimizer', 'SGD').lower()
+
+        if optimizer_name == 'sgd':
+            return optim.SGD(self.server_model.parameters(), lr=lr)
+        elif optimizer_name == 'adam':
+            return optim.Adam(self.server_model.parameters(), lr=lr)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+    def receive_client_data(self, client_id: int, activations: torch.Tensor, labels: torch.Tensor):
+        """
+        Receives smashed data (activations) and labels from a client.
+
+        Args:
+            client_id: The ID of the sending client.
+            activations: The (potentially noisy) output tensor (Ak,t) from the client's model part.
+            labels: The corresponding labels (Yk) for the batch.
+        """
+        # Ensure data is on the correct device and requires grad for server backward pass
+        self._client_activations[client_id] = activations.detach().clone().to(self.device).requires_grad_(True)
+        self._client_labels[client_id] = labels.clone().to(self.device)
+        # print(f"MainServer: Received data from Client {client_id}. Activations shape: {activations.shape}, Labels shape: {labels.shape}")
+
+    def forward_backward_pass(self, client_id: int) -> torch.Tensor:
+        """
+        Performs the forward and backward pass for a specific client's data
+        on the server-side model (WS).
+
+        Args:
+            client_id: The ID of the client whose data should be processed.
+
+        Returns:
+            The gradient of the loss with respect to the client's activations (∇Ak,t),
+            to be sent back to the client.
+        """
+        if client_id not in self._client_activations:
+            raise ValueError(f"MainServer: No activations found for client {client_id}. Call receive_client_data first.")
+
+        activations = self._client_activations[client_id]
+        labels = self._client_labels[client_id]
+
+        # Zero gradients for the server model parameters for this specific client pass
+        # Note: We aggregate gradients later, zeroing here is standard practice per client batch
+        self.optimizer.zero_grad()
+
+        # Forward pass through server model (WS)
+        outputs = self.server_model(activations)
+        loss = self.criterion(outputs, labels)
+
+        # Backward pass to compute gradients (both ∇WS and ∇Ak,t)
+        loss.backward()
+
+        # Store the gradients of the server model parameters (∇WS_k) for this client
+        # We need to clone them as they will be overwritten/zeroed in subsequent steps
+        server_grads_k = OrderedDict()
+        for name, param in self.server_model.named_parameters():
+            if param.grad is not None:
+                server_grads_k[name] = param.grad.detach().clone()
+            else:
+                # This might happen for layers without parameters or if computation graph is detached
+                 print(f"Warning: No gradient for server parameter '{name}' for client {client_id}.")
+        if server_grads_k: # Only store if gradients were computed
+            self._server_gradients.append(server_grads_k)
+
+        # Get the gradient w.r.t the activations (∇Ak,t)
+        activation_grad = activations.grad.detach().clone() if activations.grad is not None else None
+        if activation_grad is None:
+             print(f"Warning: Activation gradient (∇Ak,t) is None for client {client_id}. Check model structure and requires_grad.")
+             # Return a zero tensor of the expected shape if grad is None, to avoid crashing client
+             # This might indicate an issue elsewhere (e.g., no path back from loss to activation)
+             activation_grad = torch.zeros_like(activations)
+
+        # print(f"MainServer: Completed forward/backward for Client {client_id}. Loss: {loss.item():.4f}")
+
+        # Return the activation gradient to the client
+        return activation_grad
+
+    def aggregate_and_update(self):
+        """
+        Aggregates the collected server-side gradients (∇WS_k) using FedAvg
+        and performs an optimization step on the server model (WS).
+        Clears stored activations, labels, and gradients after update.
+        """
+        if not self._server_gradients:
+            print("MainServer: No server gradients collected for aggregation.")
+            self.clear_round_data() # Clear any leftover client data
+            return
+
+        # Average the collected server gradients (∇WS_k)
+        averaged_gradients = federated_averaging_gradients(self._server_gradients)
+
+        # Manually set the gradients of the server model to the averaged gradients
+        self.optimizer.zero_grad() # Zero gradients first
+        with torch.no_grad():
+            for name, param in self.server_model.named_parameters():
+                if name in averaged_gradients:
+                    if param.grad is None: # Initialize gradient tensor if needed
+                         param.grad = torch.zeros_like(param)
+                    param.grad.copy_(averaged_gradients[name])
+                else:
+                    # Might happen if a parameter didn't receive grad from any client
+                    print(f"Warning: Averaged gradient for '{name}' not found during MainServer update.")
+                    if param.grad is not None:
+                        param.grad.zero_() # Ensure it's zero if no update
+
+        # Perform the optimization step using the averaged gradients
+        self.optimizer.step()
+
+        print(f"MainServer: Aggregated {len(self._server_gradients)} server gradients and updated WS.")
+
+        # Clear data for the next round
+        self.clear_round_data()
+
+    def clear_round_data(self):
+        """Clears activations, labels, and gradients stored for the current round."""
+        self._client_activations.clear()
+        self._client_labels.clear()
+        self._server_gradients.clear()
+
+    def get_server_model(self) -> nn.Module:
+        """Returns the current server model instance."""
+        return self.server_model 
+
+    def get_criterion(self) -> nn.Module:
+        """Returns the criterion (loss function) used by the server."""
+        return self.criterion  import yaml
+import argparse
+import os
+
+def load_config(config_path):
+    """Loads configuration from a YAML file."""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+def parse_args():
+    """Parses command-line arguments."""
+    parser = argparse.ArgumentParser(description='Secure Split Federated Learning Simulation')
+    parser.add_argument('--config', type=str, required=True, help='Path to the configuration YAML file.')
+    args = parser.parse_args()
+    return args
+
+def get_config():
+    """Parses args and loads the specified config file."""
+    args = parse_args()
+    config = load_config(args.config)
+    # You might want to add schema validation or default value handling here
+    return config 
+
+def get_config_from_file(config_path):
+    """Loads configuration directly from a specified file path."""
+    config = load_config(config_path)
+    return config
