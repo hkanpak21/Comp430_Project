@@ -1,8 +1,8 @@
 # Breast Cancer Wisconsin (BCW) with 5 clients and adaptive DP
 seed: 42
-dataset: "bcw"
-model: "BCWDNN"
-data_dir: "./data"
+dataset: bcw
+model: BCWDNN
+data_dir: ./data
 
 # SFL Setup
 num_clients: 5
@@ -11,12 +11,12 @@ num_rounds: 20
 
 # Model & Training
 lr: 0.005
-optimizer: "Adam"
-cut_layer: 1  # Appropriate cut layer for the BCW model
-min_acc: 0.5  # Higher minimum accuracy baseline for BCW
+optimizer: Adam
+cut_layer: 3
+min_acc: 0.1
 
 # Data distribution
-partition_method: "iid"
+partition_method: iid
 # partition_method: "dirichlet"
 #dirichlet_alpha: 0.5  # Commented out as it's not needed for IID
 
@@ -24,20 +24,20 @@ partition_method: "iid"
 dp_noise:
   # Activation noise parameters
   activation_clip_norm: 1.0
-  activation_noise_multiplier: 0.01
+  activation_noise_multiplier: 1.0
   
   # Gradient noise parameters
   clip_norm: 1.0
-  initial_sigma: 0.01
+  initial_sigma: 1.0
   
   # Mode and adaptive parameters
-  mode: "unified"
+  mode: unified
   delta: 1e-5
   
   # Enable adaptive mechanisms
-  adaptive_clipping_factor: 1.5  # Factor to adjust clipping threshold based on gradient norms
-  adaptive_noise_decay_factor: 0.9  # Factor to reduce noise when validation loss decreases consistently
-  noise_decay_patience: 2  # Number of consecutive loss decreases before reducing noise
+  adaptive_clipping_factor: 0.5
+  adaptive_noise_decay_factor: 0.9
+  noise_decay_patience: 3
   validation_set_ratio: 0.1
 
 # Logging
