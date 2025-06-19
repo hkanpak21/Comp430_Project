@@ -17,6 +17,7 @@ This project implements a simulation framework for Secure Split Federated Learni
 *   **Federated Averaging:** For model aggregation.
 *   **Configurable:** Uses YAML files for experiment parameters.
 *   **Detailed Logging:** Comprehensive per-round metrics in JSON format.
+*   **Batch Experiment Runner:** Run multiple experiments with a single command.
 
 ## Repository Structure
 
@@ -25,12 +26,14 @@ Comp430_Project/
 ├── configs/               # YAML configuration files for experiments
 ├── data/                  # Placeholder for datasets
 ├── experiments/           # Main training scripts (e.g., train_secure_sfl.py)
+├── results/               # Default output directory for batch experiment results
 ├── src/                   # Source code
 │   ├── datasets/          # Data loading
 │   ├── dp/                # Differential privacy (noise, accountant)
 │   ├── models/            # Model definitions, splitting logic
 │   ├── sfl/               # SFL components (client, servers)
 │   └── utils/             # Utility functions
+├── run_experiments.py     # Batch experiment runner script
 └── requirements.txt       # Python dependencies
 ```
 
@@ -53,21 +56,26 @@ Comp430_Project/
 
 ## Configuration
 
-Experiments are configured using YAML files in the `configs/` directory. The framework now includes the following configuration types:
+Experiments are configured using YAML files in the `configs/` directory. The framework includes the following configuration types:
 
-1. **Client Scaling:** 3, 5, 10, and 20 clients (`mnist_clients{n}_vanilla_dp.yaml`)
+1. **Client Scaling:** 3, 5, 10, 20, and 50 clients (`mnist_clients{n}_vanilla_dp.yaml` and `mnist_clients{n}_adaptive_dp.yaml`)
 2. **Split Variations:** 
    - Federated Learning (`mnist_cut_layer_fl.yaml`)
    - Centralized Learning (`mnist_cut_layer_central.yaml`)
-   - Split learning with various cut layers
+   - Split learning with various cut layers (2-9)
 3. **DP Mechanisms:**
    - Vanilla DP (fixed privacy parameters)
    - Adaptive DP (adjusts noise based on validation loss)
+   - Fixed Noise (constant noise without adaptation)
+   - No Noise (baseline without DP)
 4. **Datasets:**
    - MNIST (`mnist_*.yaml`)
    - Breast Cancer Wisconsin (`bcw_*.yaml`)
+5. **Data Distribution:**
+   - IID (default)
+   - Non-IID with various concentration parameters
 
-## Running Experiments
+## Running Individual Experiments
 
 Execute experiments from the repository root:
 
@@ -81,11 +89,35 @@ python experiments/train_secure_sfl.py --config configs/mnist_clients5_adaptive_
 # Breast Cancer Wisconsin with 5 clients
 python experiments/train_secure_sfl.py --config configs/bcw_clients5_vanilla_dp.yaml --run_id bcw_clients5_vanilla
 
-# Federated Learning simulation (cut at last layer)
-python experiments/train_secure_sfl.py --config configs/mnist_cut_layer_fl.yaml --run_id mnist_fl_sim
+# Split at layer 3 with adaptive DP
+python experiments/train_secure_sfl.py --config configs/mnist_clients5_cut_layer3_adaptive_dp.yaml --run_id mnist_cut3_adaptive
 ```
 
 The `--run_id` parameter specifies an output directory for metrics under `experiments/out/`.
+
+## Batch Experiment Runner
+
+For running multiple experiments sequentially, use the `run_experiments.py` script:
+
+```bash
+# Run all configurations
+python run_experiments.py --output_dir results
+
+# Run only MNIST experiments with 5 clients
+python run_experiments.py --output_dir results/mnist_clients5 --filter mnist_clients5
+
+# Run only cut layer experiments
+python run_experiments.py --output_dir results/cut_layers --filter cut_layer
+
+# Set timeout for long-running experiments (in seconds)
+python run_experiments.py --timeout 3600
+```
+
+The batch runner:
+- Executes each experiment sequentially
+- Collects metrics and logs in an organized directory structure
+- Generates a summary report with key metrics
+- Handles timeouts and errors gracefully
 
 ## Output
 
@@ -96,7 +128,26 @@ The framework generates detailed metrics in JSON format, including:
 - Privacy parameters
 - Full configuration
 
-The metrics are stored in `experiments/out/{run_id}/metrics.json`.
+Individual experiment metrics are stored in `experiments/out/{run_id}/metrics.json`.
+
+Batch experiment results are organized in the specified output directory:
+```
+results/
+├── {config_name1}/
+│   ├── metrics.json    # Experiment metrics
+│   ├── stdout.log      # Standard output log
+│   └── stderr.log      # Error log
+├── {config_name2}/
+│   └── ...
+└── summary.json        # Summary of all experiments
+```
+
+## Model Split Layers
+
+The framework supports splitting models at various layers to evaluate the impact on performance and privacy. Available cut layers for the MNIST CNN model include:
+
+- Layers 2-9: Covering early, middle, and late splits in the network
+- Each layer can be combined with either vanilla or adaptive DP
 
 ## References
 

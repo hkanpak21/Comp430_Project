@@ -42,3 +42,7 @@ Papers/
 AGENTS.md
 
 experiments/archive/
+
+SFL_DP_Experiments.ipynb
+
+.gitignore
