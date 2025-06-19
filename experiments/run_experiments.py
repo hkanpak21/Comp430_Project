@@ -12,9 +12,9 @@ import shutil
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Run all SFL experiments')
-    parser.add_argument('--configs_dir', type=str, default='configs', 
+    parser.add_argument('--configs_dir', type=str, default='../configs', 
                         help='Directory containing configuration files')
-    parser.add_argument('--output_dir', type=str, default='results', 
+    parser.add_argument('--output_dir', type=str, default='../results', 
                         help='Directory to store results')
     parser.add_argument('--filter', type=str, default=None,
                         help='Only run configs matching this pattern (e.g., "mnist_clients5")')
@@ -32,7 +32,7 @@ def run_experiment(config_path, output_dir):
     print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting experiment: {config_name}")
     
     cmd = [
-        "python", "experiments/train_secure_sfl.py",
+        "python", "train_secure_sfl.py",
         "--config", config_path,
         "--run_id", run_id
     ]
@@ -60,7 +60,7 @@ def run_experiment(config_path, output_dir):
             f.write(stderr)
         
         # Copy metrics file to results directory
-        metrics_path = os.path.join("experiments", "out", run_id, "metrics.json")
+        metrics_path = os.path.join("out", run_id, "metrics.json")
         if os.path.exists(metrics_path):
             shutil.copy(metrics_path, os.path.join(exp_dir, "metrics.json"))
             
